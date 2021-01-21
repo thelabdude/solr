@@ -65,6 +65,7 @@ public class SchemaManager {
   final SolrQueryRequest req;
   ManagedIndexSchema managedIndexSchema;
   int timeout;
+  int versionAfterOps = -1;
 
   public SchemaManager(SolrQueryRequest req){
     this.req = req;
@@ -75,6 +76,10 @@ public class SchemaManager {
     if (timeout < 1) {
       timeout = 600;
     }
+  }
+
+  public int getSchemaVersionAfterOps() {
+    return versionAfterOps;
   }
 
   /**
@@ -160,6 +165,9 @@ public class SchemaManager {
       log.warn("{} Timed out", errorMsg);
       errors = singletonList(errorMsg + "Timed out.");
     }
+
+    this.versionAfterOps = latestVersion;
+
     return errors;
   }
 

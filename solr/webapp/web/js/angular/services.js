@@ -254,6 +254,15 @@ solrAdminServices.factory('System',
        get: {method: "GET"}
      })
 }])
+.factory('SchemaDesigner',
+   ['$resource', function($resource) {
+     return $resource('/api/schema-designer/:path', {wt: 'json', path: '@path', _:Date.now()}, {
+       get: {method: "GET"},
+       post: {method: "POST"},
+       put: {method: "PUT"},
+       upload: {method: "POST", transformRequest: angular.identity, headers: {'Content-Type': undefined} }
+     })
+}])
 .factory('AuthenticationService',
     ['base64', function (base64) {
         var service = {};

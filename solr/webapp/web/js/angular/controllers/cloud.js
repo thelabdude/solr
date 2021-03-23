@@ -581,7 +581,6 @@ var treeSubController = function($scope, Zookeeper) {
 
     $scope.initTree = function() {
       Zookeeper.simple(function(data) {
-        console.log(JSON.stringify(data.tree));
         $scope.tree = data.tree;
       });
     };

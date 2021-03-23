@@ -46,7 +46,8 @@ public class SampleDocuments {
     String text = null;
     if (uploadedBytes != null && isTextContentType()) {
       text = new String(uploadedBytes, StandardCharsets.UTF_8);
-      if (text.length() > (15 * 1024)) {
+      // 20K limit on the sample text document view
+      if (text.length() > (20 * 1024)) {
         text = null; // too big, don't show sample in textarea on UI
       }
     }

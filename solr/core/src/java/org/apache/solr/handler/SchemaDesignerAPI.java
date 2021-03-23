@@ -605,8 +605,6 @@ public class SchemaDesignerAPI {
               ". Perhaps another user updated the schema before you? Please retry your request after refreshing.");
     }
 
-    log.info("Doing update on schema object: configSet={}, mutableId={}, schemaVersion={}", configSet, mutableId, schemaVersion);
-
     // Updated field definition is in the request body as JSON
     ContentStream stream = extractSingleContentStream(req, true);
     String contentType = stream.getContentType();
@@ -617,25 +615,37 @@ public class SchemaDesignerAPI {
     try (Reader reader = stream.getReader()) {
       json = ObjectBuilder.getVal(new JSONParser(reader));
     }
+    log.info("Updating schema object: configSet={}, mutableId={}, schemaVersion={}, JSON={}", configSet, mutableId, schemaVersion, json);
 
-    log.info("Updated object in PUT: {}", json);
-
+    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, null);
     Map<String, Object> updateField = (Map<String, Object>) json;
     String type = (String) updateField.get("type");
     String copyDest = (String) updateField.get("copyDest");
-    Map<String, Object> fieldAttributes = updateField.entrySet().stream()
-        .filter(e -> !removeFieldProps.contains(e.getKey()))
+    Map<String, Object> fieldAttributes = updateField.entrySet().stream().filter(e -> !removeFieldProps.contains(e.getKey()))
         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-    boolean needsRebuild = false;
     String name = (String) fieldAttributes.get("name");
-    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, null);
+    if (isEmpty(name)) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+          "Invalid update request! JSON payload is missing the required name property: "+json);
+    }
 
+    boolean needsRebuild = false;
     String updateType = "field";
     if (type != null) {
       // this is a field
       SchemaField schemaField = schema.getField(name);
+      String currentType = schemaField.getType().getTypeName();
+
+      SimpleOrderedMap<Object> updatedTypeProps = null;
+      if (!type.equals(currentType)) {
+        // type change
+        updatedTypeProps = schema.getFieldTypeByName(type).getNamedPropertyValues(true);
+      }
+
       SimpleOrderedMap<Object> current = schemaField.getNamedPropertyValues(true);
+
+      // the diff holds all the explicit properties not inherited from the type
       Map<String, Object> diff = new HashMap<>();
       for (Map.Entry<String, Object> e : fieldAttributes.entrySet()) {
         String attr = e.getKey();
@@ -643,22 +653,41 @@ public class SchemaDesignerAPI {
         if ("name".equals(attr) || "type".equals(attr)) {
           diff.put(attr, attrValue);
         } else {
-          Object fromCurrent = current.get(attr);
+          // compare to the "current" value, but if the type changed, the "current" value comes from the new type
+          Object fromCurrent = updatedTypeProps != null ? updatedTypeProps.get(attr) : current.get(attr);
           if (fromCurrent == null || !fromCurrent.equals(attrValue)) {
             diff.put(attr, attrValue);
           }
         }
       }
 
+      // detect if they're trying to copy multi-valued fields into a single-valued field
+      Object multiValued = diff.get("multiValued");
+      if (multiValued == null) {
+        // mv not overridden explicitly, but we need the actual value, which will come from the new type (if that changed) or the current field
+        multiValued = updatedTypeProps != null ? updatedTypeProps.get("multiValued") : current.get("multiValued");
+      }
+      if (Boolean.FALSE.equals(multiValued)) {
+        // make sure there are no mv source fields if this is a copy dest
+        for (String src : schema.getCopySources(name)) {
+          SchemaField srcField = schema.getField(src);
+          if (srcField.multiValued()) {
+            log.warn("Cannot change multi-valued field {} to single-valued because it is a copy field destination for multi-valued field {}", name, src);
+            multiValued = Boolean.TRUE;
+            diff.put("multiValued", multiValued);
+            break;
+          }
+        }
+      }
+
       // switch from single-valued to multi-valued requires a full rebuild
       // See SOLR-12185 ... if we're switching from single to multi-valued, then it's a big operation
-      Object multiValued = fieldAttributes.get("multiValued");
       if (hasMultivalueChange(multiValued, schemaField)) {
         needsRebuild = true;
         log.warn("Need to rebuild the temp collection for {} after field {} updated to multi-valued {}", configSet, name, multiValued);
       }
 
-      log.info("Replacing field {} with attributes: {}", name, diff);
+      log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
       SchemaRequest.ReplaceField replaceFieldRequest = new SchemaRequest.ReplaceField(diff);
       SchemaResponse.UpdateResponse replaceFieldResponse = replaceFieldRequest.process(cloudClient(), mutableId);
       if (replaceFieldResponse.getStatus() != 0) {
@@ -1586,9 +1615,21 @@ public class SchemaDesignerAPI {
         updated = true;
       }
     } else {
+      SchemaField field = schema.getField(fieldName);
       Set<String> desired = new HashSet<>();
       for (String dest : copyDest.trim().split(",")) {
-        desired.add(dest.trim());
+        String toAdd = dest.trim();
+        // make sure the field exists and is multi-valued if this field is
+        SchemaField toAddField = schema.getFieldOrNull(toAdd);
+        if (toAddField != null) {
+          if (!field.multiValued() || toAddField.multiValued()) {
+            desired.add(toAdd);
+          } else {
+            log.warn("Skipping copy-field dest {} for {} because it is not multi-valued!", toAdd, fieldName);
+          }
+        } else {
+          log.warn("Skipping copy-field dest {} for {} because it doesn't exist!", toAdd, fieldName);
+        }
       }
       Set<String> existing = schema.getCopyFieldsList(fieldName).stream().map(cf -> cf.getDestination().getName()).collect(Collectors.toSet());
       Set<String> add = Sets.difference(desired, existing);

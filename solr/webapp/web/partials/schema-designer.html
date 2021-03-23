@@ -437,7 +437,7 @@ limitations under the License.
             </div>
           </div>
           <div id="file-node" ng-show="selectedFile">
-            <textarea name="file-node-text" id="file-node-text" ng-model="fileNodeText" rows="24" cols="72"></textarea>
+            <textarea name="file-node-text" id="file-node-text" ng-model="fileNodeText" rows="24" cols="68"></textarea>
             <div id="save-file-buttons" class="clearfix">
               <button id="save-file" type="submit" class="submit" ng-click="updateFile()"><span>Save</span></button>
             </div>
@@ -585,7 +585,7 @@ limitations under the License.
                           <dl>
                             <dt ng-repeat-start="component in componentType.components">{{component.className}}</dt>
                             <dd ng-repeat-end ng-repeat="arg in component.args" ng-class="{'ico-1': arg.booleanValue, 'ico-0': arg.booleanValue==false}">
-                              {{arg.name}}<span ng-show="arg.value && arg.name != 'words'">: {{arg.value}}</span><span ng-show="arg.value && arg.name === 'words'">: <a class="file-link" ng-click="loadFile($event)">{{arg.value}}</a></span>
+                              {{arg.name}}<span ng-show="arg.value && arg.name != 'words' && arg.name != 'protected'">: {{arg.value}}</span><span ng-show="arg.value && (arg.name === 'words' || arg.name === 'protected')">: <a class="file-link" ng-click="loadFile($event)">{{arg.value}}</a></span>
                             </dd>
                           </dl>
                         </li>

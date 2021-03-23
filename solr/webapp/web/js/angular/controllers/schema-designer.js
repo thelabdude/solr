@@ -845,7 +845,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         $scope.selectedNode.fieldType = ft;
         for (var i in copyFromType) {
           var x = copyFromType[i];
-          if (ft.a_attr[x]) {
+          if (ft.a_attr[x] !== null) {
             $scope.selectedNode[x] = ft.a_attr[x];
           } else {
             delete $scope.selectedNode[x];

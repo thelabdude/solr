@@ -18,7 +18,7 @@
 package org.apache.solr.handler.loader;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
 
 import org.apache.solr.common.SolrInputDocument;
@@ -26,19 +26,24 @@ import org.apache.solr.common.SolrInputDocument;
 import static org.apache.solr.common.params.CommonParams.JSON_MIME;
 
 public class SampleDocuments {
-  public final List<SolrInputDocument> parsed;
+  public static final SampleDocuments NONE = new SampleDocuments(null, null, null, null);
+
+  public List<SolrInputDocument> parsed;
   public final String contentType;
   public final byte[] uploadedBytes;
   public final String fileSource;
 
   public SampleDocuments(List<SolrInputDocument> parsed, String contentType, String fileSource, byte[] uploadedBytes) {
-    this.parsed = parsed != null ? parsed : Collections.emptyList();
+    this.parsed = parsed != null ? parsed : new LinkedList<>(); // needs to be mutable
     this.contentType = contentType;
     this.fileSource = fileSource;
     this.uploadedBytes = uploadedBytes;
   }
 
   private boolean isTextContentType() {
+    if (contentType == null) {
+      return false;
+    }
     return contentType.contains(JSON_MIME) || contentType.startsWith("text/") || contentType.contains("application/xml");
   }
 
@@ -52,5 +57,15 @@ public class SampleDocuments {
       }
     }
     return text;
+  }
+
+  public List<SolrInputDocument> appendDocs(List<SolrInputDocument> add, int maxDocsToLoad) {
+    if (add != null && !add.isEmpty()) {
+      parsed.addAll(add);
+      if (maxDocsToLoad > 0 && parsed.size() > maxDocsToLoad) {
+        parsed = parsed.subList(0, maxDocsToLoad);
+      }
+    }
+    return parsed;
   }
 }

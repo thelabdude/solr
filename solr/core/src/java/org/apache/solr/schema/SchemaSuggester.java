@@ -26,6 +26,6 @@ import org.apache.solr.util.plugin.NamedListInitializedPlugin;
 
 public interface SchemaSuggester extends NamedListInitializedPlugin {
   Optional<SchemaField> suggestField(String fieldName, List<Object> sampleValues, IndexSchema schema, List<String> langs);
-  boolean matchesData(SchemaField schemaField, List<Object> sampleValues);
+  ManagedIndexSchema adaptExistingFieldToData(SchemaField schemaField, List<Object> sampleValues, ManagedIndexSchema schema);
   Map<String, List<Object>> transposeDocs(List<SolrInputDocument> docs);
 }

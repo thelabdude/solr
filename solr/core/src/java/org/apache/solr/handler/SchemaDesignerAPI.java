@@ -44,7 +44,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -59,10 +58,6 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.util.EntityUtils;
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.TokenFilterFactory;
-import org.apache.lucene.analysis.core.StopFilterFactory;
-import org.apache.solr.analysis.TokenizerChain;
 import org.apache.solr.api.EndPoint;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrResponse;
@@ -73,6 +68,7 @@ import org.apache.solr.client.solrj.request.schema.FieldTypeDefinition;
 import org.apache.solr.client.solrj.request.schema.SchemaRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.schema.SchemaResponse;
+import org.apache.solr.cloud.ZkController;
 import org.apache.solr.cloud.ZkSolrResourceLoader;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
@@ -154,8 +150,10 @@ public class SchemaDesignerAPI {
   public static final String UNIQUE_KEY_FIELD_PARAM = "uniqueKeyField";
   public static final String AUTO_CREATE_FIELDS = "update.autoCreateFields";
   public static final String SOLR_CONFIG_XML = "solrconfig.xml";
+  public static final String DESIGNER_KEY = "_designer.";
+  public static final String LANGUAGES_PARAM = "languages";
 
-  static final int MAX_SAMPLE_DOCS = 500;
+  static final int MAX_SAMPLE_DOCS = 1000;
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final String DESIGNER_PREFIX = "_designer_";
   private static final Set<String> excludeConfigSetNames = new HashSet<>(Arrays.asList(DEFAULT_CONFIGSET_NAME, ".system"));
@@ -211,13 +209,15 @@ public class SchemaDesignerAPI {
     List<String> collections = listCollectionsForConfig(configSet);
     Map<String, Object> responseMap = new HashMap<>();
     responseMap.put(CONFIG_SET_PARAM, configSet);
+    boolean exists = zkStateReader().getConfigManager().configExists(configSet);
+    responseMap.put("published", exists);
+    addSettingsToResponse(getDesignerSettings(exists ? loadLatestConfig(configSet) : null), responseMap);
+
     String mutableId = getMutableId(configSet);
     int currentVersion = getCurrentSchemaVersion(mutableId);
     responseMap.put(SCHEMA_VERSION_PARAM, currentVersion);
     responseMap.put("collections", collections);
-
-    List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
-    responseMap.put("numDocs", docs != null ? docs.size() : -1);
+    responseMap.put("numDocs", loadSampleDocsFromBlobStore(configSet));
 
     rsp.getValues().addAll(responseMap);
   }
@@ -229,7 +229,9 @@ public class SchemaDesignerAPI {
   public void prepNewSchema(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "analyze");
     final String copyFrom = req.getParams().get(COPY_FROM_PARAM, DEFAULT_CONFIGSET_NAME);
-    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, copyFrom);
+    Map<String, Object> settings = new HashMap<>();
+    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, copyFrom, settings);
+
     String mutableId = getMutableId(configSet);
     if (!schema.persistManagedSchema(false)) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
@@ -241,7 +243,9 @@ public class SchemaDesignerAPI {
       indexedVersion.remove(mutableId);
     }
 
-    rsp.getValues().addAll(buildResponse(configSet, schema));
+    saveDesignerSettings(mutableId, settings);
+
+    rsp.getValues().addAll(buildResponse(configSet, schema, settings));
   }
 
   @EndPoint(method = GET,
@@ -289,7 +293,7 @@ public class SchemaDesignerAPI {
       zkClient.setData(zkPath, data, true);
     }
 
-    Map<String, Object> response = null;
+    Map<String, Object> response;
     if (updateFileError != null) {
       String errMsg = updateFileError.getMessage();
       Throwable causedBy = SolrException.getRootCause(updateFileError);
@@ -301,8 +305,9 @@ public class SchemaDesignerAPI {
       response.put(file, new String(data, StandardCharsets.UTF_8));
     } else {
       rebuildTempCollection(configSet, false);
-      ManagedIndexSchema schema = loadLatestSchema(mutableId);
-      response = buildResponse(configSet, schema);
+      Map<String, Object> settings = new HashMap<>();
+      ManagedIndexSchema schema = loadLatestSchema(mutableId, settings);
+      response = buildResponse(configSet, schema, settings);
     }
     rsp.getValues().addAll(response);
   }
@@ -321,7 +326,6 @@ public class SchemaDesignerAPI {
 
     final List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
     String textValue = null;
-
     if (isEmpty(docId)) {
       // no doc ID from client ... find the first doc with a non-empty string value for fieldName
       Optional<SolrInputDocument> doc = docs.stream().filter(d -> d.getFieldValue(fieldName) != null).findFirst();
@@ -377,7 +381,7 @@ public class SchemaDesignerAPI {
       path = "/schema-designer/collectionsForConfig",
       permission = CONFIG_READ_PERM)
   @SuppressWarnings("unchecked")
-  public void listCollectionsForConfig(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
+  public void listCollectionsForConfig(SolrQueryRequest req, SolrQueryResponse rsp) {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "collectionsForConfig");
     List<String> collections = listCollectionsForConfig(configSet);
     rsp.getValues().addAll(Collections.singletonMap("collections", collections));
@@ -429,7 +433,6 @@ public class SchemaDesignerAPI {
   @EndPoint(method = GET,
       path = "/schema-designer/download",
       permission = CONFIG_READ_PERM)
-  @SuppressWarnings("unchecked")
   public void downloadConfig(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "download");
     String mutableId = getMutableId(configSet);
@@ -546,8 +549,9 @@ public class SchemaDesignerAPI {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, schemaResponse.getException());
     }
 
-    ManagedIndexSchema schema = loadLatestSchema(mutableId);
-    Map<String, Object> response = buildResponse(configSet, schema);
+    Map<String, Object> settings = new HashMap<>();
+    ManagedIndexSchema schema = loadLatestSchema(mutableId, settings);
+    Map<String, Object> response = buildResponse(configSet, schema, settings);
     response.put(action, objectName);
     rsp.getValues().addAll(response);
   }
@@ -566,8 +570,7 @@ public class SchemaDesignerAPI {
     }
 
     RTimer timer = new RTimer();
-    List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
-    long numFound = indexSampleDocs(docs, mutableId);
+    long numFound = indexSampleDocs(loadSampleDocsFromBlobStore(configSet), mutableId);
     double tookMs = timer.getTime();
     log.debug("Indexed {} docs into temp collection {}, took {} ms", numFound, mutableId, tookMs);
     int currentVersion = getCurrentSchemaVersion(mutableId);
@@ -617,7 +620,9 @@ public class SchemaDesignerAPI {
     }
     log.info("Updating schema object: configSet={}, mutableId={}, schemaVersion={}, JSON={}", configSet, mutableId, schemaVersion, json);
 
-    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, null);
+    Map<String, Object> settings = new HashMap<>();
+    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, null, settings);
+
     Map<String, Object> updateField = (Map<String, Object>) json;
     String type = (String) updateField.get("type");
     String copyDest = (String) updateField.get("copyDest");
@@ -627,7 +632,7 @@ public class SchemaDesignerAPI {
     String name = (String) fieldAttributes.get("name");
     if (isEmpty(name)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-          "Invalid update request! JSON payload is missing the required name property: "+json);
+          "Invalid update request! JSON payload is missing the required name property: " + json);
     }
 
     boolean needsRebuild = false;
@@ -695,7 +700,7 @@ public class SchemaDesignerAPI {
         throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, exc);
       }
 
-      schema = getMutableSchemaForConfigSet(configSet, -1, null);
+      schema = getMutableSchemaForConfigSet(configSet, -1, null, settings);
       needsRebuild = applyCopyFieldUpdates(mutableId, copyDest, name, schema) || needsRebuild;
     } else {
       updateType = "type";
@@ -726,8 +731,8 @@ public class SchemaDesignerAPI {
     }
     indexedVersion.put(mutableId, currentVersion);
 
-    schema = loadLatestSchema(mutableId);
-    Map<String, Object> response = buildResponse(configSet, schema);
+    schema = loadLatestSchema(mutableId, settings);
+    Map<String, Object> response = buildResponse(configSet, schema, settings);
     response.put(updateType, updateField);
     response.put("updateType", updateType);
     rsp.getValues().addAll(response);
@@ -796,7 +801,7 @@ public class SchemaDesignerAPI {
 
       if (req.getParams().getBool(INDEX_TO_COLLECTION_PARAM, false)) {
         List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
-        if (docs != null && !docs.isEmpty()) {
+        if (!docs.isEmpty()) {
           RTimer timer = new RTimer();
           long numFound = indexSampleDocs(docs, newCollection);
           double tookMs = timer.getTime();
@@ -842,16 +847,21 @@ public class SchemaDesignerAPI {
           "'" + DEFAULT_CONFIGSET_NAME + "' is a reserved configSet name! Please choose a different name.");
     }
 
-    String languages = req.getParams().get("languages");
-    List<String> langs = isEmpty(languages) || "*".equals(languages) ? Collections.emptyList() : Arrays.asList(languages.split(","));
-
     List<SolrInputDocument> docs = null;
     String sampleDocumentsText = null;
     ContentStream stream = extractSingleContentStream(req, false);
-    if (stream != null) {
+    if (stream != null && stream.getContentType() != null) {
       SampleDocuments sampleDocs = sampleDocLoader.load(req.getParams(), stream, MAX_SAMPLE_DOCS);
       docs = sampleDocs.parsed;
       if (!docs.isEmpty()) {
+        // user posted in some docs, if there are already docs stored in the blob store, then add these to the existing set
+        List<SolrInputDocument> stored = loadSampleDocsFromBlobStore(configSet);
+        if (!stored.isEmpty()) {
+          // keep the docs in the request as newest
+          docs = sampleDocs.appendDocs(stored, MAX_SAMPLE_DOCS);
+        }
+
+        // store in the blob store so we always have access to these docs
         sampleDocumentsText = storeSampleDocs(configSet, sampleDocs);
       }
     }
@@ -859,21 +869,26 @@ public class SchemaDesignerAPI {
     if (docs == null || docs.isEmpty()) {
       // no sample docs in the request ... find in blob store (or fail if no docs previously stored)
       docs = loadSampleDocsFromBlobStore(configSet);
-      if (docs == null || docs.isEmpty()) {
-        throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "No sample documents provided for analyzing schema!");
+      if (docs.isEmpty()) {
+        // no docs, but if this schema has already been published, it's OK, we can skip the docs part
+        if (!zkStateReader().getConfigManager().configExists(configSet)) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "No sample documents provided for analyzing schema!");
+        }
+      } else {
+        // get the raw text sample docs too (if available)
+        sampleDocumentsText = loadRawSampleDocsFromBlobStore(configSet);
       }
-      // get the raw text sample docs too (if available)
-      sampleDocumentsText = loadRawSampleDocsFromBlobStore(configSet);
     }
 
     // Get a mutable "temp" schema either from the specified copy source or configSet if it already exists.
-    String defaultConfigName = DEFAULT_CONFIGSET_NAME;
-    if (zkStateReader().getConfigManager().configExists(configSet)) {
-      defaultConfigName = configSet;
-    }
-    final String copyFrom = req.getParams().get(COPY_FROM_PARAM, defaultConfigName);
+    String copyFrom = zkStateReader().getConfigManager().configExists(configSet) ? configSet
+        : req.getParams().get(COPY_FROM_PARAM, DEFAULT_CONFIGSET_NAME);
+
     String mutableId = getMutableId(configSet);
-    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, schemaVersion, copyFrom);
+
+    // holds additional settings needed by the designer to maintain state 
+    Map<String, Object> settings = new HashMap<>();
+    ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, schemaVersion, copyFrom, settings);
 
     String uniqueKeyFieldParam = req.getParams().get(UNIQUE_KEY_FIELD_PARAM);
     if (!isEmpty(uniqueKeyFieldParam)) {
@@ -884,32 +899,43 @@ public class SchemaDesignerAPI {
       }
     }
 
-    Map<String, Object> designerInfo = getDesignerInfo(mutableId);
-    Boolean enableDynamicFields = req.getParams().getBool(ENABLE_DYNAMIC_FIELDS_PARAM);
-    if (enableDynamicFields != null) {
-      if (!enableDynamicFields) {
-        IndexSchema.DynamicField[] dynamicFields = schema.getDynamicFields();
-        if (dynamicFields != null && dynamicFields.length > 0) {
-          List<String> dynamicFieldNames = Arrays.asList(dynamicFields).stream().map(f -> f.getPrototype().getName()).collect(Collectors.toList());
-          schema = schema.deleteDynamicFields(dynamicFieldNames);
-        }
-      } // TODO: go the other way?
+    boolean langsUpdated = false;
+    String[] languages = req.getParams().getParams(LANGUAGES_PARAM);
+    List<String> langs;
+    if (languages != null) {
+      langs = languages.length == 0 || (languages.length == 1 && "*".equals(languages[0])) ? Collections.emptyList() : Arrays.asList(languages);
+      if (!langs.equals(settings.get(DESIGNER_KEY + LANGUAGES_PARAM))) {
+        settings.put(DESIGNER_KEY + LANGUAGES_PARAM, langs);
+        log.info("{} changed to {}", LANGUAGES_PARAM, langs);
+        langsUpdated = true;
+      }
+    } else {
+      // nothing from client, go with what's stored in the settings ...
+      langs = (List<String>) settings.get(DESIGNER_KEY + LANGUAGES_PARAM);
+    }
 
-      Boolean storedEnableDynamicFields = (Boolean) designerInfo.get("_designer." + ENABLE_DYNAMIC_FIELDS_PARAM);
-      if (storedEnableDynamicFields != enableDynamicFields) {
-        designerInfo.put("_designer." + ENABLE_DYNAMIC_FIELDS_PARAM, enableDynamicFields);
+    boolean dynamicUpdated = false;
+    Boolean enableDynamicFields = req.getParams().getBool(ENABLE_DYNAMIC_FIELDS_PARAM);
+    if (enableDynamicFields != null && !enableDynamicFields.equals(getDesignerOption(settings, ENABLE_DYNAMIC_FIELDS_PARAM))) {
+      settings.put(DESIGNER_KEY + ENABLE_DYNAMIC_FIELDS_PARAM, enableDynamicFields);
+      dynamicUpdated = true;
+    }
+
+    if (langsUpdated) {
+      schema = syncLanguageSpecificObjectsAndFiles(mutableId, schema, settings);
+    }
+
+    if (dynamicUpdated) {
+      if (!enableDynamicFields) {
+        schema = removeDynamicFields(schema);
+      } else {
+        schema = restoreDynamicFields(mutableId, schema, settings);
       }
     }
 
     List<String> problems = new LinkedList<>();
-    schema = analyzeInputDocs(schemaSuggester.transposeDocs(docs), schema, problems, langs);
-
-    // remove all the superfluous field types for languages we don't use
-    if (!langs.isEmpty()) {
-      Set<String> langSet = new HashSet<>(Arrays.asList("ws", "general"));
-      langSet.addAll(langs);
-      schema = pruneUnusedSchemaObjectsAndFiles(mutableId, langSet, schema);
-      designerInfo.put("_designer.languages", langs);
+    if (!docs.isEmpty()) {
+      schema = analyzeInputDocs(schemaSuggester.transposeDocs(docs), schema, problems, langs);
     }
 
     // persist the updated schema
@@ -919,11 +945,9 @@ public class SchemaDesignerAPI {
 
     Boolean enableFieldGuessing = req.getParams().getBool(ENABLE_FIELD_GUESSING_PARAM);
     if (enableFieldGuessing != null) {
-      Boolean storedEnableFieldGuessing = (Boolean) designerInfo.get(AUTO_CREATE_FIELDS);
-      log.info("enableFieldGuessing={}, storedEnableFieldGuessing={}", enableFieldGuessing, storedEnableFieldGuessing);
-
-      if (enableFieldGuessing != storedEnableFieldGuessing) {
-        designerInfo.put(AUTO_CREATE_FIELDS, enableFieldGuessing);
+      Boolean storedEnableFieldGuessing = getDesignerOption(settings, AUTO_CREATE_FIELDS);
+      if (!enableFieldGuessing.equals(storedEnableFieldGuessing)) {
+        settings.put(AUTO_CREATE_FIELDS, enableFieldGuessing);
       }
     }
 
@@ -937,38 +961,36 @@ public class SchemaDesignerAPI {
       log.info("Reloaded existing collection: {}", mutableId);
     }
 
-    // remember the copyFrom param
-    if (copyFrom != null && !copyFrom.equals(designerInfo.get("_designer.copyFrom"))) {
-      designerInfo.put("_designer.copyFrom", copyFrom);
-    }
-
     // nested docs
     Boolean enableNestedDocs = req.getParams().getBool(ENABLE_NESTED_DOCS_PARAM);
     if (enableNestedDocs != null) {
-      Boolean stored = (Boolean) designerInfo.get("_designer." + ENABLE_NESTED_DOCS_PARAM);
-      if (!enableNestedDocs.equals(stored)) {
-        designerInfo.put("_designer." + ENABLE_NESTED_DOCS_PARAM, enableNestedDocs);
-      }
-      if (enableNestedDocs) {
-        enableNestedDocsFields(schema, mutableId);
-      } else {
-        deleteNestedDocsFieldsIfNeeded(schema, mutableId, true);
+      if (!enableNestedDocs.equals(getDesignerOption(settings, ENABLE_NESTED_DOCS_PARAM))) {
+        settings.put(DESIGNER_KEY + ENABLE_NESTED_DOCS_PARAM, enableNestedDocs);
+        toggleNestedDocsFields(mutableId, schema, settings);
       }
     }
 
     // index the sample docs using the suggested schema
-    RTimer timer = new RTimer();
-    long numFound = indexSampleDocs(docs, mutableId);
-    double tookMs = timer.getTime();
-    log.debug("Indexed {} docs into temp collection {}, took {} ms", numFound, mutableId, tookMs);
+    if (!docs.isEmpty()) {
+      RTimer timer = new RTimer();
+      long numFound = indexSampleDocs(docs, mutableId);
+      double tookMs = timer.getTime();
+      log.debug("Indexed {} docs into temp collection {}, took {} ms", numFound, mutableId, tookMs);
+    }
 
-    schema = loadLatestSchema(mutableId);
-    updateDesignerInfo(mutableId, designerInfo);
+    if (saveDesignerSettings(mutableId, settings)) {
+      CollectionAdminRequest.reloadCollection(mutableId).process(cloudClient());
+    }
 
-    Map<String, Object> response = buildResponse(configSet, schema);
+    schema = loadLatestSchema(mutableId, null);
+    Map<String, Object> response = buildResponse(configSet, schema, settings);
 
     final String uniqueKeyField = schema.getUniqueKeyField().getName();
-    response.put("docIds", docs.stream().map(d -> (String) d.getFieldValue(uniqueKeyField)).filter(Objects::nonNull).limit(100).collect(Collectors.toList()));
+    response.put("docIds", docs.stream()
+        .map(d -> (String) d.getFieldValue(uniqueKeyField))
+        .filter(Objects::nonNull)
+        .limit(100)
+        .collect(Collectors.toList()));
     response.put("numDocs", docs.size());
 
     // show the uploaded data in the sample documents window if it is small'ish
@@ -1050,8 +1072,7 @@ public class SchemaDesignerAPI {
     return docs != null ? docs : Collections.emptyList();
   }
 
-  @SuppressWarnings("unchecked")
-  String loadRawSampleDocsFromBlobStore(final String configSet) throws IOException {
+  protected String loadRawSampleDocsFromBlobStore(final String configSet) throws IOException {
     String sampleDocs = null;
     String baseUrl = getBaseUrl(".system");
     String url = baseUrl + "/.system/blob/" + configSet + "_sample_raw?wt=filestream";
@@ -1131,8 +1152,8 @@ public class SchemaDesignerAPI {
     DocCollection docColl = zkStateReader().getCollection(collection);
     if (docColl != null && !liveNodes.isEmpty()) {
       Optional<Replica> maybeActive = docColl.getReplicas().stream().filter(r -> r.isActive(liveNodes)).findAny();
-      Replica active = maybeActive.orElseThrow(() -> new SolrException(SolrException.ErrorCode.SERVER_ERROR,
-          collection + " collection not active for storing sample docs in blob store!"));
+      Replica active =
+          maybeActive.orElseThrow(() -> new SolrException(SolrException.ErrorCode.SERVER_ERROR, collection + " collection not active"));
       baseUrl = active.getBaseUrl();
     } else {
       // just use the baseUrl of the current node we're on
@@ -1152,10 +1173,7 @@ public class SchemaDesignerAPI {
 
       if (schema.hasExplicitField(normalizedField)) {
         SchemaField existing = schema.getField(normalizedField);
-        if (!schemaSuggester.matchesData(existing, sampleValues)) {
-          // TODO: existing field does not match the sample data, adapt field to data
-          problems.add("Existing field definition '" + normalizedField + "' does not match the sample data! field: " + existing);
-        }
+        schema = schemaSuggester.adaptExistingFieldToData(existing, sampleValues, schema);
         continue;
       }
 
@@ -1180,40 +1198,45 @@ public class SchemaDesignerAPI {
     return getConfigSetZkPath(configSet) + "/" + DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME;
   }
 
-  protected ManagedIndexSchema getMutableSchemaForConfigSet(final String configSet, final int schemaVersion, final String copyFrom) throws IOException, InterruptedException {
+  protected ManagedIndexSchema getMutableSchemaForConfigSet(final String configSet, final int schemaVersion, final String copyFrom, Map<String, Object> settings) throws IOException {
     // The designer works with mutable config sets stored in a "temp" znode in ZK instead of the "live" configSet
-    final String mutableConfigSet = getMutableId(configSet);
-    ManagedIndexSchema schema;
-    schema = loadOrCreateSchema(mutableConfigSet, schemaVersion, copyFrom);
-    return schema;
-  }
-
-  @SuppressWarnings("unchecked")
-  protected ManagedIndexSchema loadOrCreateSchema(final String configSet, final int schemaVersion, final String copyFrom) throws IOException {
+    final String mutableId = getMutableId(configSet);
 
     ManagedIndexSchema schema;
 
     // create new from the built-in "_default" configSet
     boolean isNew = false;
-    if (!zkStateReader().getConfigManager().configExists(configSet)) {
-      zkStateReader().getConfigManager().copyConfigDir(copyFrom, configSet);
-      log.debug("Copied '{}' to new configSet: {}", copyFrom, configSet);
+    if (!zkStateReader().getConfigManager().configExists(mutableId)) {
+      zkStateReader().getConfigManager().copyConfigDir(copyFrom, mutableId);
+      log.info("Copied '{}' to new mutableId: {}", copyFrom, mutableId);
       isNew = true;
     }
 
-    SolrConfig solrConfig = loadLatestConfig(configSet);
+    SolrConfig solrConfig = loadLatestConfig(mutableId);
     schema = loadLatestSchema(solrConfig);
     if (!isNew) {
       // schema is not new, so the provided version must match, otherwise, we're trying to edit dirty data
       if (schemaVersion != -1 && schemaVersion != schema.getSchemaZkVersion()) {
         throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
-            "ConfigSet '" + configSet + "' has been edited by another user! Retry your request after refreshing!");
+            "ConfigSet '" + mutableId + "' has been edited by another user! Retry your request after refreshing!");
       }
     }
 
+    Map<String, Object> info = getDesignerSettings(solrConfig);
+
     if (isNew) {
-      schema = deleteNestedDocsFieldsIfNeeded(schema, configSet, false);
+      info.put(DESIGNER_KEY + COPY_FROM_PARAM, copyFrom); // remember where this new one came from
+
+      if (!getDesignerOption(info, ENABLE_NESTED_DOCS_PARAM)) {
+        schema = deleteNestedDocsFieldsIfNeeded(schema, configSet, false);
+      }
+
+      if (!getDesignerOption(info, ENABLE_DYNAMIC_FIELDS_PARAM)) {
+        schema = removeDynamicFields(schema);
+      }
     }
+
+    settings.putAll(info); // optimization ~ return to the caller so we don't have to re-read the SolrConfig
 
     return schema;
   }
@@ -1264,48 +1287,19 @@ public class SchemaDesignerAPI {
     return schema;
   }
 
-  protected Map<String, Object> getDesignerInfo(String collection) {
-    return getDesignerInfo(loadLatestConfig(collection));
-  }
-
-  protected Map<String, Object> getDesignerInfo(SolrConfig solrConfig) {
-    // TODO: faster to just read the overlay znode directly from ZK vs. loading SolrConfig
-    Map<String, Object> map = new HashMap<>();
-    ConfigOverlay overlay = solrConfig.getOverlay();
-    Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : null;
-    if (userProps != null) {
-      map.putAll(userProps);
-    }
-    if (!map.containsKey(AUTO_CREATE_FIELDS)) {
-      map.put(AUTO_CREATE_FIELDS, true);
-    }
-    if (!map.containsKey("_designer." + ENABLE_DYNAMIC_FIELDS_PARAM)) {
-      map.put("_designer." + ENABLE_DYNAMIC_FIELDS_PARAM, true);
-    }
-    if (!map.containsKey("_designer." + ENABLE_NESTED_DOCS_PARAM)) {
-      map.put("_designer." + ENABLE_NESTED_DOCS_PARAM, false);
-    }
-    return map;
-  }
-
-  protected void updateDesignerInfo(String collection, Map<String, Object> info) throws IOException {
-    Map<String, Object> stored = getDesignerInfo(collection);
-    for (String prop : info.keySet()) {
-      Object propValue = info.get(prop);
-      if (!propValue.equals(stored.get(prop))) {
-        setUserPropertyOnConfig(collection, prop, propValue);
-      }
-    }
-  }
-
   protected SolrConfig loadLatestConfig(String configSet) {
     SolrResourceLoader resourceLoader = coreContainer.getResourceLoader();
-    ZkSolrResourceLoader zkLoader = new ZkSolrResourceLoader(resourceLoader.getInstancePath(), configSet, resourceLoader.getClassLoader(), coreContainer.getZkController());
+    ZkSolrResourceLoader zkLoader =
+        new ZkSolrResourceLoader(resourceLoader.getInstancePath(), configSet, resourceLoader.getClassLoader(), coreContainer.getZkController());
     return SolrConfig.readFromResourceLoader(zkLoader, SOLR_CONFIG_XML, true, null);
   }
 
-  protected ManagedIndexSchema loadLatestSchema(String configSet) {
-    return loadLatestSchema(loadLatestConfig(configSet));
+  protected ManagedIndexSchema loadLatestSchema(String configSet, Map<String, Object> settings) {
+    SolrConfig solrConfig = loadLatestConfig(configSet);
+    if (settings != null) {
+      settings.putAll(getDesignerSettings(solrConfig));
+    }
+    return loadLatestSchema(solrConfig);
   }
 
   protected ManagedIndexSchema loadLatestSchema(SolrConfig solrConfig) {
@@ -1333,7 +1327,7 @@ public class SchemaDesignerAPI {
         currentVersion = stat.getVersion();
       }
     } catch (KeeperException.NoNodeException notExists) {
-      currentVersion = -1; // this is ok
+      // safe to ignore
     }
     return currentVersion;
   }
@@ -1362,7 +1356,7 @@ public class SchemaDesignerAPI {
 
     // TODO: doc at a time will give more info
     try {
-      cloudSolrClient.add(collectionName, docs, 50);
+      cloudSolrClient.add(collectionName, docs, 100);
     } catch (Exception exc) {
       Throwable rootCause = SolrException.getRootCause(exc);
       String rootMsg = String.valueOf(rootCause.getMessage());
@@ -1403,120 +1397,7 @@ public class SchemaDesignerAPI {
     return numFound;
   }
 
-  protected ManagedIndexSchema pruneUnusedSchemaObjectsAndFiles(String configSet, Set<String> languages, ManagedIndexSchema schema) throws KeeperException, InterruptedException {
-    Map<String, FieldType> types = schema.getFieldTypes();
-    Set<String> toRemove = new HashSet<>();
-    for (Map.Entry<String, FieldType> e : types.entrySet()) {
-      String name = e.getKey();
-      FieldType type = e.getValue();
-      if (name.startsWith("text_") && TextField.class.equals(type.getClass())) {
-        String lang = name.substring("text_".length()).toLowerCase(Locale.US);
-        boolean match = false;
-        for (String l : languages) {
-          if (lang.contains(l)) {
-            match = true;
-            break;
-          }
-        }
-
-        if (!match) {
-          toRemove.add(e.getValue().getTypeName());
-        }
-      }
-    }
-
-    // make sure any of the field types in the list to delete are not specifically referenced by explicit fields
-    for (SchemaField field : schema.getFields().values()) {
-      toRemove.remove(field.getType().getTypeName());
-    }
-
-    // remove all the lang specific stopwords too
-    List<String> toRemoveFiles = new LinkedList<>();
-    for (String type : toRemove) {
-      TextField tf = (TextField) schema.getFieldTypeByName(type);
-      Analyzer a = tf.getIndexAnalyzer();
-      if (a instanceof TokenizerChain) {
-        TokenizerChain chain = (TokenizerChain) a;
-        TokenFilterFactory[] filters = chain.getTokenFilterFactories();
-        if (filters != null) {
-          for (TokenFilterFactory tff : filters) {
-            if (tff instanceof StopFilterFactory) {
-              StopFilterFactory sff = (StopFilterFactory) tff;
-              String file = sff.getOriginalArgs().get("words");
-              if (file != null) {
-                toRemoveFiles.add(file);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    List<String> toRemoveDF = new LinkedList<>();
-    IndexSchema.DynamicField[] dynamicFields = schema.getDynamicFields();
-    if (dynamicFields != null) {
-      for (IndexSchema.DynamicField df : dynamicFields) {
-        if (toRemove.contains(df.getPrototype().getType().getTypeName())) {
-          toRemoveDF.add(df.getPrototype().getName());
-        }
-      }
-    }
-
-    schema = schema.deleteDynamicFields(toRemoveDF);
-    schema = schema.deleteFieldTypes(toRemove);
-
-    SolrZkClient zkClient = coreContainer.getZkController().getZkClient();
-    for (String file : toRemoveFiles) {
-      String path = ZkConfigManager.CONFIGS_ZKNODE + "/" + configSet + "/" + file;
-      try {
-        zkClient.delete(path, -1, false);
-      } catch (KeeperException.NoNodeException nne) {
-        // no-op
-      }
-    }
-
-    // catch the un-referenced (but lang specific files)
-    toRemoveFiles.clear();
-    String configPathInZk = ZkConfigManager.CONFIGS_ZKNODE + "/" + configSet + "/lang";
-    final Set<String> langFiles = new HashSet<>();
-    try {
-      ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, langFiles::add);
-      langFiles.remove(configPathInZk);
-    } catch (KeeperException.NoNodeException nne) {
-      // no-op
-    }
-
-    for (String langFile : langFiles) {
-      if (langFile.startsWith("stopwords") || !langFile.endsWith(".txt")) {
-        continue;
-      }
-
-      boolean langMatch = false;
-      final String woExt = langFile.substring(0, langFile.length() - 4);
-      for (String lang : languages) {
-        if (woExt.endsWith("_" + lang)) {
-          langMatch = true;
-          break;
-        }
-      }
-
-      if (!langMatch) {
-        toRemoveFiles.add(langFile);
-      }
-    }
-
-    for (String path : toRemoveFiles) {
-      try {
-        zkClient.delete(path, -1, false);
-      } catch (KeeperException.NoNodeException nne) {
-        // no-op
-      }
-    }
-
-    return schema;
-  }
-
-  protected Map<String, Object> buildResponse(String configSet, ManagedIndexSchema schema) throws Exception {
+  protected Map<String, Object> buildResponse(String configSet, ManagedIndexSchema schema, Map<String, Object> settings) throws Exception {
     String mutableId = getMutableId(configSet);
     int currentVersion = getCurrentSchemaVersion(mutableId);
     indexedVersion.put(mutableId, currentVersion);
@@ -1539,9 +1420,8 @@ public class SchemaDesignerAPI {
     response.put("collectionsForConfig", listCollectionsForConfig(configSet));
     // Guess at a schema for each field found in the sample docs
     // Collect all fields across all docs with mapping to values
-    List<SimpleOrderedMap<Object>> fields = schema.getFields().entrySet().stream()
-        .map(e -> {
-          SchemaField f = e.getValue();
+    List<SimpleOrderedMap<Object>> fields = schema.getFields().values().stream()
+        .map(f -> {
           SimpleOrderedMap<Object> map = f.getNamedPropertyValues(true);
 
           // add the copy field destination field names
@@ -1556,18 +1436,10 @@ public class SchemaDesignerAPI {
 
     response.put("fields", fields);
 
-    Map<String, Object> designerInfo = getDesignerInfo(mutableId);
-    for (String key : designerInfo.keySet()) {
-      Object value = designerInfo.get(key);
-      if (value != null) {
-        if (key.startsWith("_designer.")) {
-          key = key.substring("_designer.".length());
-        } else if (AUTO_CREATE_FIELDS.equals(key)) {
-          key = ENABLE_FIELD_GUESSING_PARAM;
-        }
-        response.put(key, value);
-      }
+    if (settings == null) {
+      settings = getDesignerSettings(mutableId);
     }
+    addSettingsToResponse(settings, response);
 
     response.put("dynamicFields", Arrays.stream(schema.getDynamicFieldPrototypes())
         .map(e -> e.getNamedPropertyValues(true))
@@ -1591,12 +1463,30 @@ public class SchemaDesignerAPI {
     Set<String> stripPrefix = files.stream().map(f -> f.startsWith(prefix) ? f.substring(prefixLen) : f).collect(Collectors.toSet());
     stripPrefix.remove(DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME);
     stripPrefix.remove("lang");
-    response.put("files", new TreeSet<>(stripPrefix));
+    stripPrefix.remove("configoverlay.json"); // treat this file as private
+
+    List<String> sortedFiles = new ArrayList<>(stripPrefix);
+    Collections.sort(sortedFiles);
+    response.put("files", sortedFiles);
 
     // TODO: add some structure here
     //response.put("problems", problems);
 
     return response;
+  }
+
+  protected void addSettingsToResponse(Map<String, Object> settings, Map<String, Object> response) {
+    for (String key : settings.keySet()) {
+      Object value = settings.get(key);
+      if (value != null) {
+        if (key.startsWith(DESIGNER_KEY)) {
+          key = key.substring(DESIGNER_KEY.length());
+        } else if (AUTO_CREATE_FIELDS.equals(key)) {
+          key = ENABLE_FIELD_GUESSING_PARAM;
+        }
+        response.put(key, value);
+      }
+    }
   }
 
   protected boolean applyCopyFieldUpdates(String mutableId, String copyDest, String fieldName, ManagedIndexSchema schema) throws IOException, SolrServerException {
@@ -1681,8 +1571,11 @@ public class SchemaDesignerAPI {
         zipOut.putNextEntry(new ZipEntry(dirPrefix));
         zipOut.closeEntry();
       }
-      for (File child : f.listFiles()) {
-        zipIt(child, dirPrefix + child.getName(), zipOut);
+      File[] files = f.listFiles();
+      if (files != null) {
+        for (File child : files) {
+          zipIt(child, dirPrefix + child.getName(), zipOut);
+        }
       }
       return;
     }
@@ -1702,6 +1595,273 @@ public class SchemaDesignerAPI {
     return (multiValued == null ||
         (Boolean.TRUE.equals(multiValued) && !schemaField.multiValued()) ||
         (Boolean.FALSE.equals(multiValued) && schemaField.multiValued()));
+  }
+
+  protected ManagedIndexSchema updateUniqueKeyField(String mutableId, ManagedIndexSchema schema, String uniqueKeyField) {
+    // TODO: the unique key field cannot be updated by API, so we have to edit the XML directly
+    return schema;
+  }
+
+  @SuppressWarnings("unchecked")
+  protected ManagedIndexSchema syncLanguageSpecificObjectsAndFiles(String configSet, ManagedIndexSchema schema, Map<String, Object> settings) throws KeeperException, InterruptedException {
+    List<String> langs = (List<String>) settings.get(DESIGNER_KEY + LANGUAGES_PARAM);
+    if (!langs.isEmpty()) {
+      // there's a subset of languages applied, so remove all the other langs
+      schema = removeLanguageSpecificObjectsAndFiles(configSet, schema, langs);
+    }
+
+    // now restore any missing types / files for the languages we need, optionally adding back dynamic fields too
+    boolean dynamicEnabled = getDesignerOption(settings, ENABLE_DYNAMIC_FIELDS_PARAM);
+    schema = restoreLanguageSpecificObjectsAndFiles(configSet, schema, langs, dynamicEnabled);
+
+    if (!schema.persistManagedSchema(false)) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + configSet);
+    }
+    return schema;
+  }
+
+  protected ManagedIndexSchema removeLanguageSpecificObjectsAndFiles(String configSet, ManagedIndexSchema schema, List<String> langs) throws KeeperException, InterruptedException {
+    final Set<String> languages = new HashSet<>(Arrays.asList("ws", "general", "rev", "sort"));
+    languages.addAll(langs);
+
+    final Set<String> usedTypes = schema.getFields().values().stream().map(f -> f.getType().getTypeName()).collect(Collectors.toSet());
+    Map<String, FieldType> types = schema.getFieldTypes();
+    final Set<String> toRemove = types.values().stream()
+        .filter(t -> t.getTypeName().startsWith("text_") && TextField.class.equals(t.getClass()))
+        .filter(t -> !languages.contains(t.getTypeName().substring("text_".length())))
+        .map(FieldType::getTypeName)
+        .filter(t -> !usedTypes.contains(t)) // not explicitly used by a field
+        .collect(Collectors.toSet());
+
+    // find dynamic fields that refer to the types we're removing ...
+    List<String> toRemoveDF = Arrays.stream(schema.getDynamicFields())
+        .filter(df -> toRemove.contains(df.getPrototype().getType().getTypeName()))
+        .map(df -> df.getPrototype().getName())
+        .collect(Collectors.toList());
+
+    schema = schema.deleteDynamicFields(toRemoveDF);
+    schema = schema.deleteFieldTypes(toRemove);
+
+    SolrZkClient zkClient = coreContainer.getZkController().getZkClient();
+    final String configPathInZk = ZkConfigManager.CONFIGS_ZKNODE + "/" + configSet;
+    final Set<String> toRemoveFiles = new HashSet<>();
+    final Set<String> langExt = languages.stream().map(l -> "_" + l).collect(Collectors.toSet());
+    try {
+      ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, path -> {
+        if (path.endsWith(".txt")) {
+          int slashAt = path.lastIndexOf('/');
+          String fileName = slashAt != -1 ? path.substring(slashAt + 1) : "";
+          if (!fileName.contains("_")) return; // not a match
+
+          final String pathWoExt = fileName.substring(0, fileName.length() - 4);
+          boolean matchesLang = false;
+          for (String lang : langExt) {
+            if (pathWoExt.endsWith(lang)) {
+              matchesLang = true;
+              break;
+            }
+          }
+          if (!matchesLang) {
+            toRemoveFiles.add(path);
+          }
+        }
+      });
+    } catch (KeeperException.NoNodeException nne) {
+      // no-op
+    }
+
+    for (String path : toRemoveFiles) {
+      try {
+        zkClient.delete(path, -1, false);
+      } catch (KeeperException.NoNodeException nne) {
+        // no-op
+      }
+    }
+
+    return schema;
+  }
+
+  protected ManagedIndexSchema restoreLanguageSpecificObjectsAndFiles(String configSet, ManagedIndexSchema schema, List<String> langs, boolean dynamicEnabled) throws KeeperException, InterruptedException {
+    SolrConfig solrConfig = loadLatestConfig(configSet);
+    Map<String, Object> info = getDesignerSettings(solrConfig);
+
+    // pull the dynamic fields from the copyFrom schema
+    String copyFrom = (String) info.getOrDefault(DESIGNER_KEY + COPY_FROM_PARAM, DEFAULT_CONFIGSET_NAME);
+    ManagedIndexSchema copyFromSchema = loadLatestSchema(copyFrom, null);
+
+    final Set<String> langSet = new HashSet<>(Arrays.asList("ws", "general", "rev", "sort"));
+    langSet.addAll(langs);
+
+    boolean restoreAllLangs = langs.isEmpty();
+
+    final Set<String> langFilesToRestore = new HashSet<>();
+
+    // Restore missing files
+    SolrZkClient zkClient = zkStateReader().getZkClient();
+    String configPathInZk = ZkConfigManager.CONFIGS_ZKNODE + "/" + copyFrom;
+    final Set<String> langExt = langSet.stream().map(l -> "_" + l).collect(Collectors.toSet());
+    try {
+      ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, path -> {
+        if (path.endsWith(".txt")) {
+          if (restoreAllLangs) {
+            langFilesToRestore.add(path);
+            return;
+          }
+
+          final String pathWoExt = path.substring(0, path.length() - 4);
+          for (String lang : langExt) {
+            if (pathWoExt.endsWith(lang)) {
+              langFilesToRestore.add(path);
+              break;
+            }
+          }
+        }
+      });
+    } catch (KeeperException.NoNodeException nne) {
+      // no-op
+    }
+
+    if (!langFilesToRestore.isEmpty()) {
+      final String replacePathDir = "/" + configSet;
+      final String origPathDir = "/" + copyFrom;
+      for (String path : langFilesToRestore) {
+        String copyToPath = path.replace(origPathDir, replacePathDir);
+        if (!zkClient.exists(copyToPath, true)) {
+          zkClient.makePath(copyToPath, false, true);
+          zkClient.setData(copyToPath, zkClient.getData(path, null, null, true), true);
+        }
+      }
+    }
+
+    // Restore field types
+    final Map<String, FieldType> existingTypes = schema.getFieldTypes();
+    Map<String, FieldType> srcTypes = copyFromSchema.getFieldTypes();
+    List<FieldType> addTypes = srcTypes.values().stream()
+        .filter(t -> t.getTypeName().startsWith("text_") && TextField.class.equals(t.getClass()) && (restoreAllLangs || langSet.contains(t.getTypeName().substring("text_".length()))))
+        .filter(t -> !existingTypes.containsKey(t.getTypeName()))
+        .collect(Collectors.toList());
+    if (!addTypes.isEmpty()) {
+      schema = schema.addFieldTypes(addTypes, false);
+
+      if (dynamicEnabled) {
+        // restore language specific dynamic fields
+        final Set<String> existingDynFields =
+            Arrays.stream(schema.getDynamicFieldPrototypes()).map(SchemaField::getName).collect(Collectors.toSet());
+        final Set<String> retoredTypeNames = addTypes.stream().map(FieldType::getTypeName).collect(Collectors.toSet());
+        IndexSchema.DynamicField[] srcDynamicFields = copyFromSchema.getDynamicFields();
+        List<SchemaField> addDynFields = Arrays.stream(srcDynamicFields)
+            .filter(df -> retoredTypeNames.contains(df.getPrototype().getType().getTypeName()))
+            .filter(df -> !existingDynFields.contains(df.getPrototype().getName()))
+            .map(IndexSchema.DynamicField::getPrototype)
+            .collect(Collectors.toList());
+        if (!addDynFields.isEmpty()) {
+          schema = schema.addDynamicFields(addDynFields, null, false);
+        }
+      }
+    }
+
+    return schema;
+  }
+
+  protected ManagedIndexSchema removeDynamicFields(ManagedIndexSchema schema) {
+    List<String> dynamicFieldNames =
+        Arrays.stream(schema.getDynamicFields()).map(f -> f.getPrototype().getName()).collect(Collectors.toList());
+    if (!dynamicFieldNames.isEmpty()) {
+      schema = schema.deleteDynamicFields(dynamicFieldNames);
+    }
+    return schema;
+  }
+
+  @SuppressWarnings("unchecked")
+  protected ManagedIndexSchema restoreDynamicFields(String configSet, ManagedIndexSchema schema, Map<String, Object> settings) {
+    // pull the dynamic fields from the copyFrom schema
+    String copyFrom = (String) settings.getOrDefault(DESIGNER_KEY + COPY_FROM_PARAM, DEFAULT_CONFIGSET_NAME);
+    ManagedIndexSchema copyFromSchema = loadLatestSchema(copyFrom, null);
+    IndexSchema.DynamicField[] dynamicFields = copyFromSchema.getDynamicFields();
+    if (dynamicFields.length == 0 && !DEFAULT_CONFIGSET_NAME.equals(copyFrom)) {
+      copyFromSchema = loadLatestSchema(DEFAULT_CONFIGSET_NAME, null);
+      dynamicFields = copyFromSchema.getDynamicFields();
+    }
+
+    if (dynamicFields.length == 0) {
+      return schema;
+    }
+
+    final Set<String> existingDFNames =
+        Arrays.stream(schema.getDynamicFields()).map(df -> df.getPrototype().getName()).collect(Collectors.toSet());
+    List<SchemaField> toAdd = Arrays.stream(dynamicFields)
+        .filter(df -> !existingDFNames.contains(df.getPrototype().getName()))
+        .map(IndexSchema.DynamicField::getPrototype)
+        .collect(Collectors.toList());
+
+    // only restore language specific dynamic fields that match our langSet
+    List<String> langs = (List<String>) settings.get(DESIGNER_KEY + LANGUAGES_PARAM);
+    if (!langs.isEmpty()) {
+      final Set<String> langSet = new HashSet<>(Arrays.asList("ws", "general", "rev", "sort"));
+      langSet.addAll(langs);
+      toAdd = toAdd.stream()
+          .filter(df -> !df.getName().startsWith("*_txt_") || langSet.contains(df.getName().substring("*_txt_".length())))
+          .collect(Collectors.toList());
+    }
+
+    if (!toAdd.isEmpty()) {
+      // grab any field types that need to be re-added
+      final Map<String, FieldType> fieldTypes = schema.getFieldTypes();
+      List<FieldType> addTypes = toAdd.stream()
+          .map(SchemaField::getType)
+          .filter(t -> !fieldTypes.containsKey(t.getTypeName()))
+          .collect(Collectors.toList());
+      if (!addTypes.isEmpty()) {
+        schema = schema.addFieldTypes(addTypes, false);
+      }
+
+      schema = schema.addDynamicFields(toAdd, null, true);
+    }
+
+    return schema;
+  }
+
+  protected void toggleNestedDocsFields(String mutableId, ManagedIndexSchema schema, Map<String, Object> settings) throws IOException, SolrServerException {
+    if (getDesignerOption(settings, ENABLE_NESTED_DOCS_PARAM)) {
+      enableNestedDocsFields(schema, mutableId);
+    } else {
+      deleteNestedDocsFieldsIfNeeded(schema, mutableId, true);
+    }
+  }
+
+  protected Boolean getDesignerOption(Map<String, Object> settings, String propName) {
+    Boolean option = (Boolean) settings.get(DESIGNER_KEY + propName);
+    if (option == null) {
+      option = (Boolean) settings.get(propName);
+    }
+    if (option == null) {
+      throw new IllegalStateException(propName + " not found in designer settings: " + settings);
+    }
+    return option;
+  }
+
+  protected Map<String, Object> getDesignerSettings(String collection) {
+    return getDesignerSettings(loadLatestConfig(collection));
+  }
+
+  protected Map<String, Object> getDesignerSettings(SolrConfig solrConfig) {
+    Map<String, Object> map = new HashMap<>();
+    boolean isFieldGuessingEnabled = true;
+
+    if (solrConfig != null) {
+      ConfigOverlay overlay = solrConfig.getOverlay();
+      Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : null;
+      if (userProps != null) {
+        map.putAll(userProps);
+      }
+      isFieldGuessingEnabled = isFieldGuessingEnabled(solrConfig);
+    }
+
+    map.putIfAbsent(AUTO_CREATE_FIELDS, isFieldGuessingEnabled);
+    map.putIfAbsent(DESIGNER_KEY + LANGUAGES_PARAM, Collections.emptyList());
+    map.putIfAbsent(DESIGNER_KEY + ENABLE_DYNAMIC_FIELDS_PARAM, true);
+    map.putIfAbsent(DESIGNER_KEY + ENABLE_NESTED_DOCS_PARAM, false);
+    return map;
   }
 
   protected boolean isFieldGuessingEnabled(SolrConfig solrConfig) {
@@ -1752,9 +1912,33 @@ public class SchemaDesignerAPI {
     }
   }
 
-  protected ManagedIndexSchema updateUniqueKeyField(String mutableId, ManagedIndexSchema schema, String uniqueKeyField) {
-    // TODO: the unique key field cannot be updated by API, so we have to edit the XML directly
-    return schema;
+  protected boolean saveDesignerSettings(String configSet, Map<String, Object> settings) throws IOException {
+
+    SolrResourceLoader resourceLoader = coreContainer.getResourceLoader();
+    ZkSolrResourceLoader zkLoader =
+        new ZkSolrResourceLoader(resourceLoader.getInstancePath(), configSet, resourceLoader.getClassLoader(), coreContainer.getZkController());
+    SolrConfig solrConfig = SolrConfig.readFromResourceLoader(zkLoader, SOLR_CONFIG_XML, true, null);
+    ConfigOverlay overlay = solrConfig.getOverlay();
+
+    // Get what's stored in ZK
+    boolean changed = false;
+    Map<String, Object> storedUserProps = overlay.getUserProps();
+    for (String prop : settings.keySet()) {
+      Object propValue = settings.get(prop);
+      if (!propValue.equals(storedUserProps.get(prop))) {
+        // calling the API to update the overlay reloads the collection for each prop, i.e. too slows
+        //setUserPropertyOnConfig(collection, prop, propValue);
+        overlay = overlay.setUserProperty(prop, propValue);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      ZkController.persistConfigResourceToZooKeeper(zkLoader, overlay.getZnodeVersion(),
+          ConfigOverlay.RESOURCE_NAME, overlay.toByteArray(), true);
+    }
+
+    return changed;
   }
 
   private static class InMemoryResourceLoader extends SolrResourceLoader {

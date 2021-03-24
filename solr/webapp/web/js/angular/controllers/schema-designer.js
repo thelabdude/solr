@@ -84,7 +84,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
 
   $scope.confirmEditSchema = function() {
     $scope.showConfirmEditSchema = false;
-    if ($scope.hasDocsOnServer) {
+    if ($scope.hasDocsOnServer || $scope.published) {
       $scope.doAnalyze();
     } else {
       $scope.sampleMessage = "Please upload or paste some sample documents to analyze for building the '" + $scope.currentSchema + "' schema.";
@@ -108,10 +108,12 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       $scope.confirmSchema = schema;
       $scope.collectionsForConfig = data.collections;
       $scope.hasDocsOnServer = data.numDocs > 0;
+      $scope.published = data.published;
+      $scope.initDesignerSettingsFromResponse(data);
       if ($scope.collectionsForConfig && $scope.collectionsForConfig.length > 0) {
         $scope.showConfirmEditSchema = true;
       } else {
-        if ($scope.hasDocsOnServer) {
+        if ($scope.hasDocsOnServer|| $scope.published) {
           $scope.doAnalyze();
         } else {
           $scope.sampleMessage = "Please upload or paste some sample documents to build the '" + $scope.currentSchema + "' schema.";
@@ -135,7 +137,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       return;
     }
 
-    if ($scope.newSchema.indexOf(" ") != -1 || $scope.newSchema.indexOf("/") != -1) {
+    if ($scope.newSchema.indexOf(" ") !== -1 || $scope.newSchema.indexOf("/") !== -1) {
       $scope.addMessage = "Schema name should not contain spaces or /";
       return;
     }
@@ -239,10 +241,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.hasDocsOnServer = data.numDocs && data.numDocs > 0;
     $scope.uniqueKeyField = data.uniqueKeyField;
     $scope.updateUniqueKeyField = $scope.uniqueKeyField;
-    $scope.languages = data.languages ? data.languages : ["*"];
-    $scope.enableDynamicFields = ""+data.enableDynamicFields;
-    $scope.enableFieldGuessing = ""+data.enableFieldGuessing;
-    $scope.enableNestedDocs = ""+data.enableNestedDocs;
+    $scope.initDesignerSettingsFromResponse(data);
 
     var fieldTypes = fieldTypesToTree(data.fieldTypes);
     var files = filesToTree(data.files);
@@ -421,7 +420,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
           if ("field" === $scope.adding) {
             nodeId = "field/"+data[command];
           }
-          console.log(">> added nodeId: "+nodeId);
           $scope.onSchemaUpdated(data.configSet, data, nodeId);
         }, 500);
       }
@@ -744,6 +742,14 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.hasDocsOnServer = false; // so the updates get sent on next analyze action
   };
 
+  $scope.initDesignerSettingsFromResponse = function(data) {
+    $scope.enableDynamicFields = data.enableDynamicFields !== null ? ""+data.enableDynamicFields : "true";
+    $scope.enableFieldGuessing = data.enableFieldGuessing !== null ? ""+data.enableFieldGuessing : "true";
+    $scope.enableNestedDocs = data.enableNestedDocs !== null ? ""+data.enableNestedDocs : "false";
+    $scope.languages = data.languages !== null && data.languages.length > 0 ? data.languages : ["*"];
+    $scope.copySchema = data.copyFrom !== null ? data.copyFrom : "_default";
+  };
+
   $scope.doAnalyze = function (nodeId) {
     delete $scope.sampleMessage;
 
@@ -774,11 +780,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     }
 
     if ($scope.languages && $scope.languages.length > 0) {
-      if ($scope.languages.length === 1 && $scope.languages[0] === "*") {
-        delete params.languages;
-      } else {
-        params.languages = $scope.languages.join();
-      }
+      params.languages = $scope.languages;
     }
 
     if ($scope.copySchema) {
@@ -816,7 +818,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       var postData = null;
       if (!$scope.hasDocsOnServer) {
         postData = $scope.sampleDocuments;
-        if (!postData) {
+        if (!postData && !$scope.published) {
           return;
         }
       }

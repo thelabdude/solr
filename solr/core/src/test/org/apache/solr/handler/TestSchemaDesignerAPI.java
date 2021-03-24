@@ -18,6 +18,7 @@
 package org.apache.solr.handler;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -51,6 +52,7 @@ import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_DYNAMIC_FIELDS_PA
 import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_FIELD_GUESSING_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.FIELD_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.INDEX_TO_COLLECTION_PARAM;
+import static org.apache.solr.handler.SchemaDesignerAPI.LANGUAGES_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.NEW_COLLECTION_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.RELOAD_COLLECTIONS_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.SCHEMA_VERSION_PARAM;
@@ -88,6 +90,97 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     cc = cluster.getJettySolrRunner(0).getCoreContainer();
     assertNotNull(cc);
     schemaDesignerAPI = new SchemaDesignerAPI(cc);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testAddTechproductsProgressively() throws Exception {
+    File docsDir = new File(ExternalPaths.SOURCE_HOME, "example/exampledocs");
+    assertTrue(docsDir.getAbsolutePath() + " not found!", docsDir.isDirectory());
+    File[] toAdd = docsDir.listFiles((dir, name) -> name.endsWith(".xml") || name.endsWith(".json") || name.endsWith(".csv"));
+
+    String configSet = "techproducts";
+
+    ModifiableSolrParams reqParams = new ModifiableSolrParams();
+
+    // Use the prep endpoint to prepare the new schema
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    SolrQueryResponse rsp = new SolrQueryResponse();
+    SolrQueryRequest req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    schemaDesignerAPI.prepNewSchema(req, rsp);
+    assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
+    assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
+    SolrParams rspData = rsp.getValues().toSolrParams();
+    int schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+
+    for (File next : toAdd) {
+      // Analyze some sample documents to refine the schema
+      reqParams.clear();
+      reqParams.set(CONFIG_SET_PARAM, configSet);
+      reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+      req = mock(SolrQueryRequest.class);
+      when(req.getParams()).thenReturn(reqParams);
+
+      // POST some sample JSON docs
+      ContentStreamBase.FileStream stream = new ContentStreamBase.FileStream(next);
+      stream.setContentType(TestSampleDocumentsLoader.guessContentTypeFromFilename(next.getName()));
+      when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+
+      rsp = new SolrQueryResponse();
+
+      // POST /schema-designer/analyze
+      schemaDesignerAPI.analyze(req, rsp);
+
+      assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
+      assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
+      assertNotNull(rsp.getValues().get("fields"));
+      assertNotNull(rsp.getValues().get("fieldTypes"));
+      assertNotNull(rsp.getValues().get("docIds"));
+
+      // capture the schema version for MVCC
+      rspData = rsp.getValues().toSolrParams();
+      schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+    }
+
+    // query to see how the schema decisions impact retrieval / ranking
+    reqParams.clear();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    reqParams.set(CommonParams.Q, "*:*");
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    rsp = new SolrQueryResponse();
+
+    // GET /schema-designer/query
+    schemaDesignerAPI.query(req, rsp);
+    assertNotNull(rsp.getResponseHeader());
+    SolrDocumentList results = (SolrDocumentList) rsp.getResponse();
+    assertEquals(46, results.getNumFound());
+
+    // publish schema to a config set that can be used by real collections
+    reqParams.clear();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+
+    String collection = "techproducts";
+    reqParams.set(NEW_COLLECTION_PARAM, collection);
+    reqParams.set(INDEX_TO_COLLECTION_PARAM, true);
+    reqParams.set(RELOAD_COLLECTIONS_PARAM, true);
+    reqParams.set(CLEANUP_TEMP_PARAM, true);
+
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.publish(req, rsp);
+    assertNotNull(cc.getZkController().zkStateReader.getCollection(collection));
+
+    // listCollectionsForConfig
+    reqParams.clear();
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.listCollectionsForConfig(req, rsp);
+    List<String> collections = (List<String>) rsp.getValues().get("collections");
+    assertNotNull(collections);
+    assertTrue(collections.contains(collection));
   }
 
   @Test
@@ -147,9 +240,8 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
 
     // Analyze some sample documents to refine the schema
+    reqParams.clear();
     reqParams.set(CONFIG_SET_PARAM, configSet);
-    reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, "true");
-
     req = mock(SolrQueryRequest.class);
     when(req.getParams()).thenReturn(reqParams);
 
@@ -194,7 +286,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     when(req.getParams()).thenReturn(reqParams);
     rsp = new SolrQueryResponse();
     schemaDesignerAPI.getFileContents(req, rsp);
-    String solrconfigXml = (String)rsp.getValues().get(file);
+    String solrconfigXml = (String) rsp.getValues().get(file);
     assertNotNull(solrconfigXml);
     reqParams.clear();
 
@@ -231,20 +323,67 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     reqParams.clear();
     assertNotNull(rspData.get("updateFileError"));
 
-    // Update the language and remove dynamic fields
+    // remove dynamic fields and change the language to "en" only
     rsp = new SolrQueryResponse();
     // POST /schema-designer/analyze
     reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
     reqParams.set(CONFIG_SET_PARAM, configSet);
-    reqParams.set("languages", "en");
+    reqParams.set(LANGUAGES_PARAM, "en");
     reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, false);
     reqParams.set(ENABLE_FIELD_GUESSING_PARAM, false);
     req = mock(SolrQueryRequest.class);
     when(req.getParams()).thenReturn(reqParams);
     schemaDesignerAPI.analyze(req, rsp);
+    assertEquals(Collections.singletonList("en"), rsp.getValues().get(LANGUAGES_PARAM));
+    List<String> filesInResp = (List<String>) rsp.getValues().get("files");
+    assertEquals(5, filesInResp.size());
+    assertTrue(filesInResp.contains("lang/stopwords_en.txt"));
+
+    rspData = rsp.getValues().toSolrParams();
+    schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+
+    reqParams.clear();
+
+    // add the dynamic fields back and change the languages too
+    rsp = new SolrQueryResponse();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    reqParams.add(LANGUAGES_PARAM, "en");
+    reqParams.add(LANGUAGES_PARAM, "fr");
+    reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, true);
+    reqParams.set(ENABLE_FIELD_GUESSING_PARAM, false);
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    schemaDesignerAPI.analyze(req, rsp);
+
+    assertEquals(Arrays.asList("en", "fr"), rsp.getValues().get(LANGUAGES_PARAM));
+    filesInResp = (List<String>) rsp.getValues().get("files");
+    assertEquals(7, filesInResp.size());
+    assertTrue(filesInResp.contains("lang/stopwords_fr.txt"));
+
     rspData = rsp.getValues().toSolrParams();
     reqParams.clear();
     schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+
+    // add back all the default languages
+    rsp = new SolrQueryResponse();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    reqParams.add(LANGUAGES_PARAM, "*");
+    reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, false);
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    schemaDesignerAPI.analyze(req, rsp);
+    filesInResp = (List<String>) rsp.getValues().get("files");
+    assertEquals(43, filesInResp.size());
+    assertTrue(filesInResp.contains("lang/stopwords_fr.txt"));
+    assertTrue(filesInResp.contains("lang/stopwords_en.txt"));
+    assertTrue(filesInResp.contains("lang/stopwords_it.txt"));
+
+    rspData = rsp.getValues().toSolrParams();
+    reqParams.clear();
+    schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+
 
     // Get the value of a sample document
     String docId = "978-0641723445";
@@ -352,7 +491,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     reqParams.set(CONFIG_SET_PARAM, configSet);
     rsp = new SolrQueryResponse();
     schemaDesignerAPI.listCollectionsForConfig(req, rsp);
-    List<String> collections = (List<String>)rsp.getValues().get("collections");
+    List<String> collections = (List<String>) rsp.getValues().get("collections");
     assertNotNull(collections);
     assertTrue(collections.contains(collection));
 

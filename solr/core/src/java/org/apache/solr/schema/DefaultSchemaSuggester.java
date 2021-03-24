@@ -45,6 +45,7 @@ import org.apache.commons.lang3.LocaleUtils;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.update.processor.ParseBooleanFieldUpdateProcessorFactory;
 import org.apache.solr.update.processor.ParseDateFieldUpdateProcessorFactory;
 import org.apache.solr.update.processor.ParseDoubleFieldUpdateProcessorFactory;
@@ -98,8 +99,20 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
   }
 
   @Override
-  public boolean matchesData(SchemaField schemaField, List<Object> sampleValues) {
-    return true; // TODO: make sure an existing field agrees with the data
+  public ManagedIndexSchema adaptExistingFieldToData(SchemaField schemaField, List<Object> sampleValues, ManagedIndexSchema schema) {
+    // Promote a single-valued to multi-valued if needed
+    if (!schemaField.multiValued()) {
+      if (isMultiValued(sampleValues)) {
+        // this existing field needs to be promoted to multi-valued
+        SimpleOrderedMap<Object> fieldProps = schemaField.getNamedPropertyValues(false);
+        fieldProps.add("multiValued", true);
+        fieldProps.remove("name");
+        fieldProps.remove("type");
+        schema = schema.replaceField(schemaField.name, schemaField.type, fieldProps.asShallowMap());
+      }
+    }
+    // TODO: other "healing" type operations here ...
+    return schema;
   }
 
   @Override
@@ -149,7 +162,8 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
       if (isDateTime(flattened)) {
         type = isMV ? "pdates" : "pdate";
       } else if (isText(flattened)) {
-        type = Locale.ENGLISH.getLanguage().equals(locale.getLanguage()) ? "text_en" : "text_general";
+        // text_en is not MV?!?
+        type = !isMV && "en".equals(locale.getLanguage()) ? "text_en" : "text_general";
       }
     }
 

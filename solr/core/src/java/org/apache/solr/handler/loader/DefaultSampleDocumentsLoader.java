@@ -75,7 +75,7 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
   public SampleDocuments load(SolrParams params, ContentStream stream, final int maxDocsToLoad) throws IOException {
     final String contentType = stream.getContentType();
     if (contentType == null) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Unable to determine content type for loading sample docs.");
+      return SampleDocuments.NONE;
     }
 
     if (params == null) {

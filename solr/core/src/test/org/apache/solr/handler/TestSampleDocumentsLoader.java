@@ -94,10 +94,10 @@ public class TestSampleDocumentsLoader {
     return sampleDocs.parsed;
   }
 
-  protected String guessContentTypeFromFilename(String name) {
+  public static String guessContentTypeFromFilename(String name) {
     int dotAt = name.lastIndexOf('.');
     if (dotAt != -1) {
-      final String ext = name.substring(dotAt + 1).toLowerCase(Locale.ROOT);
+      final String ext = name.substring(dotAt + 1);
       switch (ext) {
         case "csv":
           return "text/csv";

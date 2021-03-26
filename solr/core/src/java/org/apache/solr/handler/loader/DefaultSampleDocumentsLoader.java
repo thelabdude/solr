@@ -101,7 +101,7 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
         docs = loadJsonDocs(params, stream, maxDocsToLoad);
       } else if (contentType.contains("text/xml") || contentType.contains("application/xml")) {
         docs = loadXmlDocs(params, stream, maxDocsToLoad);
-      } else if (contentType.contains("text/csv")) {
+      } else if (contentType.contains("text/csv") || contentType.contains("application/csv")) {
         docs = loadCsvDocs(params, stream, maxDocsToLoad);
       } else {
         throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, contentType + " not supported yet!");

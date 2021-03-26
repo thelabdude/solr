@@ -27,7 +27,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     delete $scope.queryResultsTree;
 
     $scope.languages = ["*"];
-    $scope.copySchema = "_default";
+    $scope.copyFrom = "_default";
     delete $scope.sampleMessage;
     delete $scope.sampleDocuments;
     delete $scope.fileUpload;
@@ -147,8 +147,8 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       return;
     }
 
-    if (!$scope.copySchema) {
-      $scope.copySchema = "_default";
+    if (!$scope.copyFrom) {
+      $scope.copyFrom = "_default";
     }
 
     $scope.resetSchema();
@@ -158,7 +158,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.currentSchema = $scope.newSchema;
     $scope.sampleMessage = "Please upload or paste some sample documents to analyze for building the '" + $scope.currentSchema + "' schema.";
 
-    SchemaDesigner.post({path: "prep", configSet: $scope.newSchema, copyFrom: $scope.copySchema}, null, function (data) {
+    SchemaDesigner.post({path: "prep", configSet: $scope.newSchema, copyFrom: $scope.copyFrom}, null, function (data) {
       // no-op by design ... we want this to run in the bg
     });
   };
@@ -747,7 +747,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.enableFieldGuessing = data.enableFieldGuessing !== null ? ""+data.enableFieldGuessing : "true";
     $scope.enableNestedDocs = data.enableNestedDocs !== null ? ""+data.enableNestedDocs : "false";
     $scope.languages = data.languages !== null && data.languages.length > 0 ? data.languages : ["*"];
-    $scope.copySchema = data.copyFrom !== null ? data.copyFrom : "_default";
+    $scope.copyFrom = data.copyFrom !== null ? data.copyFrom : "_default";
   };
 
   $scope.doAnalyze = function (nodeId) {
@@ -755,11 +755,11 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
 
     var schema = $scope.currentSchema;
     if (schema) {
-      delete $scope.copySchema;
+      delete $scope.copyFrom;
     } else {
       schema = $scope.newSchema;
-      if (!$scope.copySchema) {
-        $scope.copySchema = "_default";
+      if (!$scope.copyFrom) {
+        $scope.copyFrom = "_default";
       }
     }
 
@@ -783,8 +783,8 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       params.languages = $scope.languages;
     }
 
-    if ($scope.copySchema) {
-      params.copyFrom = $scope.copySchema;
+    if ($scope.copyFrom) {
+      params.copyFrom = $scope.copyFrom;
     }
 
     $scope.updateWorking = true;
@@ -823,12 +823,33 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         }
       }
 
-      SchemaDesigner.post(params, postData, function (data) {
+      var respHandler = function (data) {
         if (data.sampleDocuments) {
           $scope.sampleDocuments = data.sampleDocuments;
         }
         $scope.onSchemaUpdated(schema, data, nodeId);
-      });
+      };
+
+      // TODO: need a better approach to detecting the content type from text content
+      var contentType = "text/plain";
+      if (postData != null) {
+        var txt = postData.trim();
+        if ((txt.startsWith("[") && txt.includes("]")) || (txt.startsWith("{") && txt.includes("}"))) {
+          contentType = "application/json"
+        } else if (txt.startsWith("<") || txt.includes("<add>") || txt.includes("<!--")) {
+          contentType = "text/xml";
+        } else {
+          contentType = "application/csv";
+        }
+      }
+
+      if (contentType === "text/xml") {
+        SchemaDesigner.postXml(params, postData, respHandler);
+      } else if (contentType === "application/csv") {
+        SchemaDesigner.postCsv(params, postData, respHandler);
+      } else {
+        SchemaDesigner.post(params, postData, respHandler);
+      }
     }
   };
 

@@ -145,6 +145,7 @@ public class SchemaDesignerAPI {
   public static final String ENABLE_FIELD_GUESSING_PARAM = "enableFieldGuessing";
   public static final String ENABLE_NESTED_DOCS_PARAM = "enableNestedDocs";
   public static final String TEMP_COLLECTION_PARAM = "tempCollection";
+  public static final String PUBLISHED_VERSION = "publishedVersion";
   public static final String DOC_ID_PARAM = "docId";
   public static final String FIELD_PARAM = "field";
   public static final String UNIQUE_KEY_FIELD_PARAM = "uniqueKeyField";
@@ -768,6 +769,18 @@ public class SchemaDesignerAPI {
               ". Perhaps another user updated the schema before you? Please retry your request after refreshing.");
     }
 
+    Map<String, Object> settings = getDesignerSettings(mutableId);
+    final Number publishedVersion = (Number) settings.get(DESIGNER_KEY + PUBLISHED_VERSION);
+    if (publishedVersion != null) {
+      int currentVersionOfSrc = getCurrentSchemaVersion(configSet);
+      if (publishedVersion.intValue() != currentVersionOfSrc) {
+        throw new SolrException(SolrException.ErrorCode.CONFLICT,
+            "Version mismatch for " + configSet + "! Expected version " + publishedVersion.intValue() + " but current is " + currentVersionOfSrc +
+                "; another user may have changed the published schema while you were making edits. " +
+                "Publishing your changes would result in losing the edits from the other user.");
+      }
+    }
+
     Set<String> copiedToZkPaths = new HashSet<>();
     if (cfgMgr.configExists(configSet)) {
       SolrZkClient zkClient = coreContainer.getZkController().getZkClient();
@@ -1198,16 +1211,23 @@ public class SchemaDesignerAPI {
     return getConfigSetZkPath(configSet) + "/" + DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME;
   }
 
-  protected ManagedIndexSchema getMutableSchemaForConfigSet(final String configSet, final int schemaVersion, final String copyFrom, Map<String, Object> settings) throws IOException {
+  protected ManagedIndexSchema getMutableSchemaForConfigSet(final String configSet, final int schemaVersion, final String copyFrom, Map<String, Object> settings) throws IOException, KeeperException, InterruptedException {
     // The designer works with mutable config sets stored in a "temp" znode in ZK instead of the "live" configSet
     final String mutableId = getMutableId(configSet);
 
     ManagedIndexSchema schema;
 
     // create new from the built-in "_default" configSet
+    int publishedVersion = -1;
     boolean isNew = false;
     if (!zkStateReader().getConfigManager().configExists(mutableId)) {
-      zkStateReader().getConfigManager().copyConfigDir(copyFrom, mutableId);
+      if (zkStateReader().getConfigManager().configExists(configSet)) {
+        publishedVersion = getCurrentSchemaVersion(configSet);
+        // ignore the copyFrom as we're making a mutable temp copy of an already published configSet
+        zkStateReader().getConfigManager().copyConfigDir(configSet, mutableId);
+      } else {
+        zkStateReader().getConfigManager().copyConfigDir(copyFrom, mutableId);
+      }
       log.info("Copied '{}' to new mutableId: {}", copyFrom, mutableId);
       isNew = true;
     }
@@ -1225,7 +1245,15 @@ public class SchemaDesignerAPI {
     Map<String, Object> info = getDesignerSettings(solrConfig);
 
     if (isNew) {
-      info.put(DESIGNER_KEY + COPY_FROM_PARAM, copyFrom); // remember where this new one came from
+      // remember where this new one came from, unless the mutable is an edit of an already published schema,
+      // in which case we want to preserve the original copyFrom
+      info.putIfAbsent(DESIGNER_KEY + COPY_FROM_PARAM, copyFrom);
+
+      if (publishedVersion != -1) {
+        // keep track of the version of the configSet the mutable is derived from in case another user
+        // changes the derived from schema before we publish the mutable on top of it
+        info.put(DESIGNER_KEY + PUBLISHED_VERSION, publishedVersion);
+      }
 
       if (!getDesignerOption(info, ENABLE_NESTED_DOCS_PARAM)) {
         schema = deleteNestedDocsFieldsIfNeeded(schema, configSet, false);

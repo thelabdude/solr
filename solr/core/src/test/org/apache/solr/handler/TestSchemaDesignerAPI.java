@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
@@ -35,6 +36,7 @@ import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStreamBase;
+import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
@@ -45,11 +47,14 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.apache.solr.common.params.CommonParams.JSON_MIME;
+import static org.apache.solr.common.util.Utils.makeMap;
 import static org.apache.solr.handler.SchemaDesignerAPI.CLEANUP_TEMP_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.CONFIG_SET_PARAM;
+import static org.apache.solr.handler.SchemaDesignerAPI.COPY_FROM_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.DOC_ID_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_DYNAMIC_FIELDS_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_FIELD_GUESSING_PARAM;
+import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_NESTED_DOCS_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.FIELD_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.INDEX_TO_COLLECTION_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.LANGUAGES_PARAM;
@@ -118,6 +123,8 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
       // Analyze some sample documents to refine the schema
       reqParams.clear();
       reqParams.set(CONFIG_SET_PARAM, configSet);
+      reqParams.set(LANGUAGES_PARAM, "en");
+      reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, false);
       reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
       req = mock(SolrQueryRequest.class);
       when(req.getParams()).thenReturn(reqParams);
@@ -239,6 +246,14 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
     assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
 
+    Map<String, Object> expSettings = makeMap(
+        ENABLE_DYNAMIC_FIELDS_PARAM, true,
+        ENABLE_FIELD_GUESSING_PARAM, true,
+        ENABLE_NESTED_DOCS_PARAM, false,
+        LANGUAGES_PARAM, Collections.emptyList(),
+        COPY_FROM_PARAM, "_default");
+    assertDesignerSettings(expSettings, rsp.getValues());
+
     // Analyze some sample documents to refine the schema
     reqParams.clear();
     reqParams.set(CONFIG_SET_PARAM, configSet);
@@ -262,6 +277,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertNotNull(rsp.getValues().get("docIds"));
     String idField = rsp.getValues()._getStr(UNIQUE_KEY_FIELD_PARAM, null);
     assertNotNull(idField);
+    assertDesignerSettings(expSettings, rsp.getValues());
 
     // capture the schema version for MVCC
     SolrParams rspData = rsp.getValues().toSolrParams();
@@ -334,7 +350,15 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     req = mock(SolrQueryRequest.class);
     when(req.getParams()).thenReturn(reqParams);
     schemaDesignerAPI.analyze(req, rsp);
-    assertEquals(Collections.singletonList("en"), rsp.getValues().get(LANGUAGES_PARAM));
+
+    expSettings = makeMap(
+        ENABLE_DYNAMIC_FIELDS_PARAM, false,
+        ENABLE_FIELD_GUESSING_PARAM, false,
+        ENABLE_NESTED_DOCS_PARAM, false,
+        LANGUAGES_PARAM, Collections.singletonList("en"),
+        COPY_FROM_PARAM, "_default");
+    assertDesignerSettings(expSettings, rsp.getValues());
+
     List<String> filesInResp = (List<String>) rsp.getValues().get("files");
     assertEquals(5, filesInResp.size());
     assertTrue(filesInResp.contains("lang/stopwords_en.txt"));
@@ -356,7 +380,14 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     when(req.getParams()).thenReturn(reqParams);
     schemaDesignerAPI.analyze(req, rsp);
 
-    assertEquals(Arrays.asList("en", "fr"), rsp.getValues().get(LANGUAGES_PARAM));
+    expSettings = makeMap(
+        ENABLE_DYNAMIC_FIELDS_PARAM, true,
+        ENABLE_FIELD_GUESSING_PARAM, false,
+        ENABLE_NESTED_DOCS_PARAM, false,
+        LANGUAGES_PARAM, Arrays.asList("en", "fr"),
+        COPY_FROM_PARAM, "_default");
+    assertDesignerSettings(expSettings, rsp.getValues());
+
     filesInResp = (List<String>) rsp.getValues().get("files");
     assertEquals(7, filesInResp.size());
     assertTrue(filesInResp.contains("lang/stopwords_fr.txt"));
@@ -374,6 +405,15 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     req = mock(SolrQueryRequest.class);
     when(req.getParams()).thenReturn(reqParams);
     schemaDesignerAPI.analyze(req, rsp);
+
+    expSettings = makeMap(
+        ENABLE_DYNAMIC_FIELDS_PARAM, false,
+        ENABLE_FIELD_GUESSING_PARAM, false,
+        ENABLE_NESTED_DOCS_PARAM, false,
+        LANGUAGES_PARAM, Collections.emptyList(),
+        COPY_FROM_PARAM, "_default");
+    assertDesignerSettings(expSettings, rsp.getValues());
+
     filesInResp = (List<String>) rsp.getValues().get("files");
     assertEquals(43, filesInResp.size());
     assertTrue(filesInResp.contains("lang/stopwords_fr.txt"));
@@ -383,7 +423,6 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     rspData = rsp.getValues().toSolrParams();
     reqParams.clear();
     schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
-
 
     // Get the value of a sample document
     String docId = "978-0641723445";
@@ -508,5 +547,13 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     QueryResponse qr = cluster.getSolrClient().query(collection, query);
     // this proves the docs were stored in the blob store too
     assertEquals(4, qr.getResults().getNumFound());
+  }
+
+  @SuppressWarnings("rawtypes")
+  protected void assertDesignerSettings(Map<String, Object> expected, NamedList actual) {
+    for (String expKey : expected.keySet()) {
+      Object expValue = expected.get(expKey);
+      assertEquals("Value for designer setting '" + expKey + "' not match expected!", expValue, actual.get(expKey));
+    }
   }
 }

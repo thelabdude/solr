@@ -286,10 +286,9 @@ limitations under the License.
         <p ng-show="firstSchemaMessage" class="clearfix">Get started building your search app by defining a new schema. A schema defines all the fields in your search index. Solr comes with a <b>_default</b> schema that provides a good starting point to customize based on your specific data.<br/><br/></p>
         <form>
           <p class="clearfix"><label for="add_schema">New Schema:</label><input type="text" name="name" id="add_schema" ng-model="newSchema"></p>
-          <p class="clearfix"><label for="copy_schema">Copy from:</label>
+          <p class="clearfix"><label for="copy_schema">Copy From:</label>
             <select id="copy_schema"
-                    placeholder-text-single="'Schema to Copy'"
-                    ng-model="copySchema"
+                    ng-model="copyFrom"
                     chosen
                     ng-options="schema for schema in schemasWithDefault"></select>
           </p>

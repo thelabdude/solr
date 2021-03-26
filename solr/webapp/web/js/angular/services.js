@@ -260,6 +260,8 @@ solrAdminServices.factory('System',
        get: {method: "GET"},
        post: {method: "POST"},
        put: {method: "PUT"},
+       postXml: {headers: {'Content-type': 'text/xml'}, method: "POST"},
+       postCsv: {headers: {'Content-type': 'application/csv'}, method: "POST"},
        upload: {method: "POST", transformRequest: angular.identity, headers: {'Content-Type': undefined} }
      })
 }])

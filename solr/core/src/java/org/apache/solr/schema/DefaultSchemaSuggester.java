@@ -86,14 +86,15 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
     // TODO: use passed in langs
     Locale locale = Locale.ENGLISH;
 
-    String fieldTypeName = guessFieldType(fieldName, sampleValues, schema, locale);
+    boolean isMV = isMultiValued(sampleValues);
+    String fieldTypeName = guessFieldType(fieldName, sampleValues, schema, isMV, locale);
     FieldType fieldType = schema.getFieldTypeByName(fieldTypeName);
     if (fieldType == null) {
       // TODO: construct this field type on-the-fly ...
       throw new IllegalStateException("FieldType '" + fieldTypeName + "' not found in the schema!");
     }
 
-    Map<String, String> fieldProps = guessFieldProps(fieldName, fieldType, sampleValues, schema);
+    Map<String, String> fieldProps = guessFieldProps(fieldName, fieldType, sampleValues, isMV, schema);
     SchemaField schemaField = schema.newField(fieldName, fieldTypeName, fieldProps);
     return Optional.of(schemaField);
   }
@@ -101,17 +102,16 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
   @Override
   public ManagedIndexSchema adaptExistingFieldToData(SchemaField schemaField, List<Object> sampleValues, ManagedIndexSchema schema) {
     // Promote a single-valued to multi-valued if needed
-    if (!schemaField.multiValued()) {
-      if (isMultiValued(sampleValues)) {
-        // this existing field needs to be promoted to multi-valued
-        SimpleOrderedMap<Object> fieldProps = schemaField.getNamedPropertyValues(false);
-        fieldProps.add("multiValued", true);
-        fieldProps.remove("name");
-        fieldProps.remove("type");
-        schema = schema.replaceField(schemaField.name, schemaField.type, fieldProps.asShallowMap());
-      }
+    if (!schemaField.multiValued() && isMultiValued(sampleValues)) {
+      // this existing field needs to be promoted to multi-valued
+      SimpleOrderedMap<Object> fieldProps = schemaField.getNamedPropertyValues(false);
+      fieldProps.add("multiValued", true);
+      fieldProps.remove("name");
+      fieldProps.remove("type");
+      schema = schema.replaceField(schemaField.name, schemaField.type, fieldProps.asShallowMap());
     }
-    // TODO: other "healing" type operations here ...
+    // TODO: other "healing" type operations here ... but we have to be careful about overriding explicit user changes
+    // such as a user making a text field a string field, we wouldn't want to revert that field back to text
     return schema;
   }
 
@@ -134,9 +134,8 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
     return mapByField;
   }
 
-  protected String guessFieldType(String fieldName, final List<Object> sampleValues, IndexSchema schema, Locale locale) {
+  protected String guessFieldType(String fieldName, final List<Object> sampleValues, IndexSchema schema, boolean isMV, Locale locale) {
     String type = null;
-    boolean isMV = isMultiValued(sampleValues);
 
     // flatten values to a single stream for easier analysis; also remove nulls
     List<Object> flattened = sampleValues.stream()
@@ -162,8 +161,7 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
       if (isDateTime(flattened)) {
         type = isMV ? "pdates" : "pdate";
       } else if (isText(flattened)) {
-        // text_en is not MV?!?
-        type = !isMV && "en".equals(locale.getLanguage()) ? "text_en" : "text_general";
+        type = "en".equals(locale.getLanguage()) ? "text_en" : "text_general";
       }
     }
 
@@ -201,7 +199,7 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
 
     // don't want to choose text for fields where string will do
     // if most of the sample values are unique but only a few terms, then it's likely a text field
-    return (maxLength > 100 || maxTerms > 15 || (maxTerms > 4 && ((float)Sets.newHashSet(values).size()/values.size()) > 0.9f));
+    return (maxLength > 100 || maxTerms > 15 || (maxTerms > 4 && values.size() > 10 && ((float) Sets.newHashSet(values).size() / values.size()) > 0.9f));
   }
 
   protected String isFloatOrDouble(List<Object> values, Locale locale) {
@@ -287,11 +285,13 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
     return false;
   }
 
-  protected Map<String, String> guessFieldProps(String fieldName, FieldType fieldType, List<Object> sampleValues, IndexSchema schema) {
+  protected Map<String, String> guessFieldProps(String fieldName, FieldType fieldType, List<Object> sampleValues, boolean isMV, IndexSchema schema) {
     Map<String, String> props = new HashMap<>();
     props.put("indexed", "true");
 
-    //props.put("multiValued", "false"); // MV comes from the field type
+    if (isMV && !fieldType.isMultiValued()) {
+      props.put("multiValued", "true"); // override the mv setting on the type
+    }
 
     boolean docValues = true;
     if (fieldType instanceof TextField) {

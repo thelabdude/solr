@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -107,6 +108,7 @@ import org.apache.solr.schema.ManagedIndexSchema;
 import org.apache.solr.schema.ManagedIndexSchemaFactory;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.SchemaSuggester;
+import org.apache.solr.schema.StrField;
 import org.apache.solr.schema.TextField;
 import org.apache.solr.update.processor.UpdateRequestProcessorChain;
 import org.apache.solr.util.RTimer;
@@ -218,8 +220,7 @@ public class SchemaDesignerAPI {
     int currentVersion = getCurrentSchemaVersion(mutableId);
     responseMap.put(SCHEMA_VERSION_PARAM, currentVersion);
     responseMap.put("collections", collections);
-    responseMap.put("numDocs", loadSampleDocsFromBlobStore(configSet));
-
+    responseMap.put("numDocs", loadSampleDocsFromBlobStore(configSet).size());
     rsp.getValues().addAll(responseMap);
   }
 
@@ -871,7 +872,8 @@ public class SchemaDesignerAPI {
         List<SolrInputDocument> stored = loadSampleDocsFromBlobStore(configSet);
         if (!stored.isEmpty()) {
           // keep the docs in the request as newest
-          docs = sampleDocs.appendDocs(stored, MAX_SAMPLE_DOCS);
+          ManagedIndexSchema latestSchema = loadLatestSchema(getMutableId(configSet), null);
+          docs = sampleDocs.appendDocs(latestSchema.getUniqueKeyField().getName(), stored, MAX_SAMPLE_DOCS);
         }
 
         // store in the blob store so we always have access to these docs
@@ -948,6 +950,15 @@ public class SchemaDesignerAPI {
 
     List<String> problems = new LinkedList<>();
     if (!docs.isEmpty()) {
+      // make sure every doc has a uniqueKey field
+      if (StrField.class.equals(schema.getUniqueKeyField().getType().getClass())) {
+        final String idFieldName = schema.getUniqueKeyField().getName();
+        docs.forEach(d -> {
+          if (d.getFieldValue(idFieldName) == null) {
+            d.setField(idFieldName, UUID.randomUUID().toString().toLowerCase(Locale.ROOT));
+          }
+        });
+      }
       schema = analyzeInputDocs(schemaSuggester.transposeDocs(docs), schema, problems, langs);
     }
 
@@ -1414,6 +1425,7 @@ public class SchemaDesignerAPI {
         if (numFound >= docs.size()) {
           break;
         }
+        Thread.sleep(100);
       } while (System.nanoTime() < deadline);
 
       if (numFound < docs.size()) {

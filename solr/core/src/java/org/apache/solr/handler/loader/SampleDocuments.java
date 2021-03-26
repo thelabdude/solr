@@ -20,6 +20,9 @@ package org.apache.solr.handler.loader;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.solr.common.SolrInputDocument;
 
@@ -59,9 +62,15 @@ public class SampleDocuments {
     return text;
   }
 
-  public List<SolrInputDocument> appendDocs(List<SolrInputDocument> add, int maxDocsToLoad) {
+  public List<SolrInputDocument> appendDocs(String idFieldName, List<SolrInputDocument> add, int maxDocsToLoad) {
     if (add != null && !add.isEmpty()) {
-      parsed.addAll(add);
+      final Set<Object> ids =
+          parsed.stream().map(doc -> doc.getFieldValue(idFieldName)).filter(Objects::nonNull).collect(Collectors.toSet());
+      final List<SolrInputDocument> toAdd = add.stream().filter(doc -> {
+         Object id = doc.getFieldValue(idFieldName);
+         return id != null && !ids.contains(id); // doc has ID and it's not already in the set
+      }).collect(Collectors.toList());
+      parsed.addAll(toAdd);
       if (maxDocsToLoad > 0 && parsed.size() > maxDocsToLoad) {
         parsed = parsed.subList(0, maxDocsToLoad);
       }

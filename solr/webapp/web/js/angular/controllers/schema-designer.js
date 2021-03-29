@@ -103,11 +103,18 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.query = {q: '*:*', sortBy:'score', sortDir:'desc'};
 
     SchemaDesigner.get({path: "configs"}, function (data) {
-      $scope.schemas = data.configSets
-
-      // slightly hacky but meh
-      $scope.schemasWithDefault = [...data.configSets];
+      $scope.schemas = [];
+      $scope.schemasWithDefault = [];
       $scope.schemasWithDefault.push("_default");
+
+      for (var s in data.configSets) {
+        $scope.schemasWithDefault.push(s);
+        if (data.configSets[s]) {
+          $scope.schemas.push(s);
+        }
+      }
+      $scope.schemas.sort();
+      $scope.schemasWithDefault.sort();
 
       // if no schemas available to select, open the pop-up immediately
       if ($scope.schemas.length == 0) {
@@ -483,6 +490,9 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
 
     $scope.showPublish = !$scope.showPublish;
     delete $scope.publishErrors;
+
+    $scope.disableDesigner = "false";
+
     if ($scope.showPublish && !$scope.newCollection) {
       $scope.newCollection = {numShards: 1, replicationFactor: 1, indexToCollection: "true"};
     }
@@ -1109,7 +1119,8 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       configSet: $scope.currentSchema,
       schemaVersion: $scope.schemaVersion,
       reloadCollections: $scope.reloadOnPublish,
-      cleanupTemp: true
+      cleanupTemp: true,
+      disableDesigner: $scope.disableDesigner
     };
     if ($scope.newCollection && $scope.newCollection.name) {
       params.newCollection = $scope.newCollection.name;

@@ -1002,7 +1002,7 @@ limitations under the License.
   left: 1150px;
   padding: 10px;
   width: 370px;
-  height: 360px;
+  height: 410px;
 }
 
 #content #designer .actions .publish-button {
@@ -1025,11 +1025,12 @@ limitations under the License.
 
 #content #designer #publish-new-coll {
   margin-top: 15px;
-  margin-bottom: 25px;
+  margin-bottom: 10px;
 }
 
 #content #designer .publish-buttons
 {
+  margin-top: 20px;
   float: right;
   width: 48%;
 }

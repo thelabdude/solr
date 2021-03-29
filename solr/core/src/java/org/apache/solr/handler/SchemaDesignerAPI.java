@@ -430,32 +430,19 @@ public class SchemaDesignerAPI {
     rsp.getValues().addAll(Collections.singletonMap("configSets", listConfigs()));
   }
 
-  protected List<String> listConfigs() throws IOException {
+  protected Map<String, Boolean> listConfigs() throws IOException {
     List<String> configsInZk = zkStateReader().getConfigManager().listConfigs();
-    SolrZkClient zkClient = zkStateReader().getZkClient();
-    Set<String> configs = configsInZk.stream()
+    final Map<String, Boolean> configs = configsInZk.stream()
         .filter(c -> !excludeConfigSetNames.contains(c) && !c.startsWith(DESIGNER_PREFIX))
-        .filter(c -> {
-          // filter out any configs that don't want to be edited by the Schema Designer
-          // this allows users to lock down specific configs from being edited by the designer
-          boolean disabled = false;
-          try {
-            ConfigOverlay overlay = getConfigOverlay(zkClient, c);
-            Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : Collections.emptyMap();
-            disabled = (boolean) userProps.getOrDefault(DESIGNER_KEY + "disabled", false);
-          } catch (Exception exc) {
-            log.error("Failed to load configoverlay.json for configset {}", c, exc);
-          }
-          return !disabled;
-        }).collect(Collectors.toSet());
+        .collect(Collectors.toMap(c -> c, c -> !isDesignerDisabled(c)));
 
     // add the in-progress but drop the _designer prefix
-    configs.addAll(configsInZk.stream()
+    configsInZk.stream()
         .filter(c -> c.startsWith(DESIGNER_PREFIX))
         .map(c -> c.substring(DESIGNER_PREFIX.length()))
-        .collect(Collectors.toList()));
+        .forEach(c -> configs.putIfAbsent(c, true));
 
-    return configs.stream().sorted().collect(Collectors.toList());
+    return configs;
   }
 
   @EndPoint(method = GET,
@@ -847,6 +834,10 @@ public class SchemaDesignerAPI {
       cfgMgr.deleteConfigDir(mutableId);
     }
 
+    boolean disableDesigner = req.getParams().getBool("disableDesigner", false);
+    settings.put(DESIGNER_KEY + "disabled", disableDesigner);
+    saveDesignerSettings(configSet, settings);
+
     Map<String, Object> response = new HashMap<>();
     response.put(CONFIG_SET_PARAM, configSet);
     response.put(SCHEMA_VERSION_PARAM, getCurrentSchemaVersion(configSet));
@@ -1233,7 +1224,7 @@ public class SchemaDesignerAPI {
     return getConfigSetZkPath(configSet) + "/" + DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME;
   }
 
-  protected ManagedIndexSchema getMutableSchemaForConfigSet(final String configSet, final int schemaVersion, final String copyFrom, Map<String, Object> settings) throws IOException, KeeperException, InterruptedException {
+  protected ManagedIndexSchema getMutableSchemaForConfigSet(final String configSet, final int schemaVersion, String copyFrom, Map<String, Object> settings) throws IOException, KeeperException, InterruptedException {
     // The designer works with mutable config sets stored in a "temp" znode in ZK instead of the "live" configSet
     final String mutableId = getMutableId(configSet);
 
@@ -1243,10 +1234,16 @@ public class SchemaDesignerAPI {
     int publishedVersion = -1;
     boolean isNew = false;
     if (!zkStateReader().getConfigManager().configExists(mutableId)) {
+
+      // are they opening a temp of an existing?
       if (zkStateReader().getConfigManager().configExists(configSet)) {
+        if (isDesignerDisabled(configSet)) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Schema '" + configSet + "' is locked for edits by the schema designer!");
+        }
         publishedVersion = getCurrentSchemaVersion(configSet);
         // ignore the copyFrom as we're making a mutable temp copy of an already published configSet
         zkStateReader().getConfigManager().copyConfigDir(configSet, mutableId);
+        copyFrom = configSet;
       } else {
         zkStateReader().getConfigManager().copyConfigDir(copyFrom, mutableId);
       }
@@ -1264,6 +1261,10 @@ public class SchemaDesignerAPI {
     Map<String, Object> info = getDesignerSettings(solrConfig);
 
     if (isNew) {
+      if (!configSet.equals(copyFrom)) {
+        info.put(DESIGNER_KEY + "disabled", false);
+      }
+
       // remember where this new one came from, unless the mutable is an edit of an already published schema,
       // in which case we want to preserve the original copyFrom
       info.putIfAbsent(DESIGNER_KEY + COPY_FROM_PARAM, copyFrom);
@@ -2061,6 +2062,21 @@ public class SchemaDesignerAPI {
       overlay = new ConfigOverlay(json, stat.getVersion());
     }
     return overlay;
+  }
+
+  protected boolean isDesignerDisabled(String configSet) {
+    // filter out any configs that don't want to be edited by the Schema Designer
+    // this allows users to lock down specific configs from being edited by the designer
+    boolean disabled;
+    try {
+      ConfigOverlay overlay = getConfigOverlay(zkStateReader().getZkClient(), configSet);
+      Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : Collections.emptyMap();
+      disabled = (boolean) userProps.getOrDefault(DESIGNER_KEY + "disabled", false);
+    } catch (Exception exc) {
+      log.error("Failed to load configoverlay.json for configset {}", configSet, exc);
+      disabled = true; // error on the side of caution here
+    }
+    return disabled;
   }
 
   private static class InMemoryResourceLoader extends SolrResourceLoader {

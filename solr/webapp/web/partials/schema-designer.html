@@ -272,7 +272,10 @@ limitations under the License.
             <input type="checkbox" ng-model="newCollection.indexToCollection" id="add_coll_index_sample" title="index sample docs" ng-true-value="'true'" ng-false-value="'false'"/>
             <label for="add_coll_index_sample" class="checkbox" title="Index sample docs">Index sample docs in new collection?</label>
           </div>
-
+        </div>
+        <div class="field-form">
+          <input type="checkbox" ng-model="disableDesigner" id="disable_designer" title="Disable future changes in schema designer" ng-true-value="'true'" ng-false-value="'false'"/>
+          <label for="disable_designer" class="checkbox" title="Disable future changes in schema designer">Disable future changes by the schema designer?</label>
         </div>
         <div ng-repeat="error in publishErrors" ng-show="publishErrors" class="clearfix note error"><span>{{error}}</span></div>
         <div class="clearfix publish-buttons">

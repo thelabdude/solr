@@ -20,7 +20,6 @@ package org.apache.solr.handler;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
-import java.util.Locale;
 
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.SolrInputField;

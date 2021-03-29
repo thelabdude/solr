@@ -18,6 +18,47 @@
 solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, $cookies, $window, Constants, SchemaDesigner, Luke) {
   $scope.resetMenu("schema-designer", Constants.IS_ROOT_PAGE);
 
+  $scope.onError = function(errorMsg, errorCode) {
+    $scope.updateWorking = false;
+    delete $scope.updateStatusMessage;
+    var detailsAt = errorMsg.indexOf(" Details: ");
+    if (detailsAt !== -1) {
+      $scope.designerAPIError = errorMsg.substring(0, detailsAt);
+      $scope.designerAPIErrorDetails = errorMsg.substring(detailsAt+10);
+    } else {
+      $scope.designerAPIError = errorMsg;
+      delete $scope.designerAPIErrorDetails;
+    }
+    if (errorCode === 409) {
+      $scope.schemaVersion = -1; // reset to get the latest
+      $scope.isVersionMismatch = true;
+      $scope.errorButton = "Reload Schema";
+    } else if (errorCode < 500) {
+      $scope.isVersionMismatch = false;
+      $scope.errorButton = "OK";
+    } // else 500 errors get the top-level error message
+  };
+  
+  $scope.errorHandler = function(e) {
+    var error = e.data ? e.data.error : null;
+    if (error) {
+      $scope.onError(error.msg, error.code);
+    }
+  };
+
+  $scope.closeErrorDialog = function() {
+    delete $scope.designerAPIError;
+    delete $scope.designerAPIErrorDetails;
+    if ($scope.isVersionMismatch) {
+      $scope.isVersionMismatch = false;
+      var nodeId = "/";
+      if ($scope.selectedNode) {
+        nodeId = $scope.selectedNode.href;
+      }
+      $scope.doAnalyze(nodeId);
+    }
+  };
+
   $scope.refresh = function () {
     $scope.updateStatusMessage = "";
     $scope.analysisVerbose = false;
@@ -32,6 +73,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     delete $scope.sampleDocuments;
     delete $scope.fileUpload;
 
+    $scope.schemaVersion = -1;
     $scope.schemaTree = {};
     $scope.showSchemaActions = false;
     $scope.sampleDocIds = [];
@@ -160,7 +202,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
 
     SchemaDesigner.post({path: "prep", configSet: $scope.newSchema, copyFrom: $scope.copyFrom}, null, function (data) {
       // no-op by design ... we want this to run in the bg
-    });
+    }, $scope.errorHandler);
   };
 
   $scope.cancelAddSchema = function () {
@@ -227,7 +269,13 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.hasDocsOnServer = false;
     $scope.query = {q: '*:*', sortBy:'score', sortDir:'desc'};
     $scope.sampleDocuments = "";
+    $scope.schemaVersion = -1;
 
+    $scope.updateWorking = false;
+    $scope.isVersionMismatch = false;
+    delete $scope.updateStatusMessage;
+    delete $scope.designerAPIError;
+    delete $scope.designerAPIErrorDetails;
     delete $scope.selectedFacets;
     delete $scope.fileUpload;
     delete $scope.sampleDocuments;
@@ -287,18 +335,21 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
           nodeId = "/";
         }
         $scope.onSelectSchemaTreeNode(nodeId);
-
         $scope.updateWorking = false;
-        if ($scope.selectedUpdated) {
-          $scope.selectedUpdated = false;
-          $scope.updateStatusMessage = "Changes applied successfully.";
-          $timeout(function () {
+        if (data.updateError != null) {
+          $scope.onError(data.updateError, data.updateErrorCode);
+        }  else {
+          if ($scope.selectedUpdated) {
+            $scope.selectedUpdated = false;
+            $scope.updateStatusMessage = "Changes applied successfully.";
+            $timeout(function () {
+              delete $scope.updateStatusMessage;
+            }, 2000);
+          } else {
             delete $scope.updateStatusMessage;
-          }, 2000);
-        } else {
-          delete $scope.updateStatusMessage;
+          }
         }
-
+        
         // re-fire the current query to reflect the updated schema
         $scope.doQuery();
       });
@@ -401,11 +452,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     var addData = {};
     addData[command] = applyConstraintsOnField($scope.newField);
 
-    SchemaDesigner.post({
-      path: "add",
-      configSet: $scope.currentSchema,
-      schemaVersion: $scope.schemaVersion
-    }, addData, function (data) {
+    SchemaDesigner.post({path: "add", configSet: $scope.currentSchema, schemaVersion: $scope.schemaVersion}, addData, function (data) {
       if (data.errors) {
         $scope.addErrors = data.errors[0].errorMessages;
         if (typeof $scope.addErrors === "string") {
@@ -423,7 +470,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
           $scope.onSchemaUpdated(data.configSet, data, nodeId);
         }, 500);
       }
-    });
+    }, $scope.errorHandler);
   }
 
   $scope.togglePublish = function (event) {
@@ -457,11 +504,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
   $scope.addCopyField = function () {
     delete $scope.addCopyFieldErrors;
     var data = {"add-copy-field": $scope.copyField};
-    SchemaDesigner.post({
-      path: "add",
-      configSet: $scope.currentSchema,
-      schemaVersion: $scope.schemaVersion
-    }, data, function (data) {
+    SchemaDesigner.post({path: "add", configSet: $scope.currentSchema, schemaVersion: $scope.schemaVersion}, data, function (data) {
       if (data.errors) {
         $scope.addCopyFieldErrors = data.errors[0].errorMessages;
         if (typeof $scope.addCopyFieldErrors === "string") {
@@ -472,7 +515,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         // TODO:
         //$timeout($scope.refresh, 1500);
       }
-    });
+    }, $scope.errorHandler);
   }
 
   $scope.toggleAnalyzer = function (analyzer) {
@@ -551,7 +594,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         delete $scope.updateFileError;
         $scope.onSchemaUpdated(data.configSet, data, nodeId);
       }
-    });
+    }, $scope.errorHandler);
   };
 
   $scope.onSelectFileNode = function(id, doSelectOnTree) {
@@ -768,6 +811,9 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     }
 
     var params = {path: "analyze", configSet: schema};
+    if ($scope.schemaVersion && $scope.schemaVersion !== -1) {
+      params.schemaVersion = $scope.schemaVersion;
+    }
 
     if ($scope.enableDynamicFields) {
       params.enableDynamicFields = $scope.enableDynamicFields;
@@ -812,7 +858,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
           delete $scope.fileUpload; // docs are on the server ... we don't need to keep uploading them
         }
         $scope.onSchemaUpdated(schema, data, nodeId);
-      });
+      }, $scope.errorHandler);
     } else {
       // don't need to keep re-posting the same sample if already stored in the blob store
       var postData = null;
@@ -844,11 +890,11 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       }
 
       if (contentType === "text/xml") {
-        SchemaDesigner.postXml(params, postData, respHandler);
+        SchemaDesigner.postXml(params, postData, respHandler, $scope.errorHandler);
       } else if (contentType === "application/csv") {
-        SchemaDesigner.postCsv(params, postData, respHandler);
+        SchemaDesigner.postCsv(params, postData, respHandler, $scope.errorHandler);
       } else {
-        SchemaDesigner.post(params, postData, respHandler);
+        SchemaDesigner.post(params, postData, respHandler, $scope.errorHandler);
       }
     }
   };
@@ -942,6 +988,10 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
           $scope.updateSelectedError = "Copy to field '"+name+"' doesn't exist!";
           return;
         }
+        if (name === $scope.selectedNode.name) {
+          $scope.updateSelectedError = "Cannot copy a field to itself!";
+          return;
+        }
       }
     } else {
       delete putData.copyDest;
@@ -956,11 +1006,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.updateWorking = true;
     $scope.updateStatusMessage = "Updating "+$scope.selectedType+" ...";
 
-    SchemaDesigner.put({
-      path: "update",
-      configSet: $scope.currentSchema,
-      schemaVersion: $scope.schemaVersion
-    }, putData, function (data) {
+    SchemaDesigner.put({path: "update", configSet: $scope.currentSchema, schemaVersion: $scope.schemaVersion}, putData, function (data) {
       $scope.schemaVersion = data.schemaVersion;
       $scope.currentSchema = data.configSet;
       $scope.core = data.core;
@@ -980,7 +1026,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       }
 
       $scope.onSchemaUpdated($scope.currentSchema, data, href);
-    });
+    }, $scope.errorHandler);
   };
 
   // TODO: These are copied from analysis.js, so move to a shared location for both vs. duplicating
@@ -1084,7 +1130,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       if (data.newCollection) {
         $window.location.href = "#/" + data.newCollection + "/collection-overview";
       }
-    });
+    }, $scope.errorHandler);
   };
 
   $scope.downloadConfig = function () {

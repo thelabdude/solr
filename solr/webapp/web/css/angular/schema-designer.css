@@ -1298,3 +1298,51 @@ limitations under the License.
   display: block;
   width: 150px;
 }
+
+#content #designer .error-dialog
+{
+  z-index: 200;
+  background-color: #f0f0f0;
+  border: 1px solid #c00;
+  box-shadow: 5px 5px 10px #c0c0c0;
+  -moz-box-shadow: 5px 5px 10px #c0c0c0;
+  -webkit-box-shadow: 5px 5px 10px #c0c0c0;
+  position: absolute;
+  left: 350px;
+  top: 95px;
+  padding: 20px;
+  width: 450px;
+}
+
+#content #designer #error-dialog #error-dialog-buttons {
+  float: right;
+}
+
+#content #designer #error-dialog .error-button {
+  margin-right: 15px;
+}
+
+#content #designer #error-dialog .error-button span
+{
+  background-image: url( ../../img/ico/tick.png );
+}
+
+#content #designer #error-dialog .reload-error-button {
+  margin-right: 15px;
+}
+
+#content #designer #error-dialog .reload-error-button span
+{
+  background-image: url( ../../img/ico/arrow-circle.png );
+}
+
+#content #designer #error-dialog-note {
+  color: #c00;
+  font-weight: bold;
+  margin-bottom: 15px;
+}
+
+#content #designer #error-dialog-details {
+  min-height: 80px;
+  margin-bottom: 15px;
+}

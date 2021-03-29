@@ -231,6 +231,15 @@ limitations under the License.
         </div>
       </div>
 
+      <div id="error-dialog" class="error-dialog" ng-show="designerAPIError">
+        <div id="error-dialog-note"><p class="clearfix"><img src="img/ico/prohibition.png"/>&nbsp;{{designerAPIError}}</p></div>
+        <div id="error-dialog-details"><div ng-show="designerAPIErrorDetails"><textarea rows="10" cols="55">{{designerAPIErrorDetails}}</textarea></div></div>
+        <div id="error-dialog-buttons" class="clearfix">
+          <button type="reset" class="reload-error-button" ng-click="closeErrorDialog()" ng-show="isVersionMismatch"><span>Reload Schema</span></button>
+          <button type="reset" class="error-button" ng-click="closeErrorDialog()" ng-show="!isVersionMismatch"><span>OK</span></button>
+        </div>
+      </div>
+
       <div id="publish-dialog" class="publish" ng-show="showPublish" escape-pressed="hideAll()">
         <div id="publish-dialog-note"><p class="clearfix">Publish schema and associated configs to Zookeeper as a Solr ConfigSet.</p></div>
         <div id="publish-affected">
@@ -319,7 +328,7 @@ limitations under the License.
             </div>
             <div id="analyze-buttons">
               <p class="clearfix note" ng-show="sampleMessage && !fileUpload && !sampleDocuments"><span>{{sampleMessage}}</span></p>
-              <button type="submit" ng-click="doAnalyze()" id="analyze" ng-show="hasDocsOnServer || sampleDocuments || fileUpload"><span>Analyze Documents</span></button>
+              <button type="submit" ng-click="doAnalyze()" id="analyze" ng-show="currentSchema && (hasDocsOnServer || sampleDocuments || fileUpload)"><span>Analyze Documents</span></button>
             </div>
           </form>
         </div>

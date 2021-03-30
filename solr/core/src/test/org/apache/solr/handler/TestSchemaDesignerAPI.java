@@ -23,6 +23,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
@@ -37,6 +38,7 @@ import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
@@ -103,21 +105,40 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     File docsDir = new File(ExternalPaths.SOURCE_HOME, "example/exampledocs");
     assertTrue(docsDir.getAbsolutePath() + " not found!", docsDir.isDirectory());
     File[] toAdd = docsDir.listFiles((dir, name) -> name.endsWith(".xml") || name.endsWith(".json") || name.endsWith(".csv"));
+    assertNotNull("No test data files found in " + docsDir.getAbsolutePath(), toAdd);
 
     String configSet = "techproducts";
 
     ModifiableSolrParams reqParams = new ModifiableSolrParams();
 
-    // Use the prep endpoint to prepare the new schema
-    reqParams.set(CONFIG_SET_PARAM, configSet);
+    // GET /schema-designer/info
     SolrQueryResponse rsp = new SolrQueryResponse();
     SolrQueryRequest req = mock(SolrQueryRequest.class);
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    when(req.getParams()).thenReturn(reqParams);
+    schemaDesignerAPI.getInfo(req, rsp);
+    // response should just be the default values
+    Map<String, Object> expSettings = makeMap(
+        ENABLE_DYNAMIC_FIELDS_PARAM, true,
+        ENABLE_FIELD_GUESSING_PARAM, true,
+        ENABLE_NESTED_DOCS_PARAM, false,
+        LANGUAGES_PARAM, Collections.emptyList());
+    assertDesignerSettings(expSettings, rsp.getValues());
+    SolrParams rspData = rsp.getValues().toSolrParams();
+    int schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+    assertEquals(schemaVersion, -1); // shouldn't exist yet
+
+    // Use the prep endpoint to prepare the new schema
+    reqParams.clear();
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    rsp = new SolrQueryResponse();
+    req = mock(SolrQueryRequest.class);
     when(req.getParams()).thenReturn(reqParams);
     schemaDesignerAPI.prepNewSchema(req, rsp);
     assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
     assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
-    SolrParams rspData = rsp.getValues().toSolrParams();
-    int schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+    rspData = rsp.getValues().toSolrParams();
+    schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
 
     for (File next : toAdd) {
       // Analyze some sample documents to refine the schema
@@ -149,6 +170,23 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
       rspData = rsp.getValues().toSolrParams();
       schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
     }
+
+    // get info (from the temp)
+    reqParams.clear();
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    rsp = new SolrQueryResponse();
+
+    // GET /schema-designer/info
+    schemaDesignerAPI.getInfo(req, rsp);
+    expSettings = makeMap(
+        ENABLE_DYNAMIC_FIELDS_PARAM, false,
+        ENABLE_FIELD_GUESSING_PARAM, true,
+        ENABLE_NESTED_DOCS_PARAM, false,
+        LANGUAGES_PARAM, Collections.singletonList("en"),
+        COPY_FROM_PARAM, "_default");
+    assertDesignerSettings(expSettings, rsp.getValues());
 
     // query to see how the schema decisions impact retrieval / ranking
     reqParams.clear();
@@ -224,7 +262,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertNotNull(rsp.getValues().get("fieldTypes"));
     List<String> docIds = (List<String>) rsp.getValues().get("docIds");
     assertNotNull(docIds);
-    assertTrue(docIds.size() == 100); // designer limits doc ids to top 100
+    assertEquals(100, docIds.size()); // designer limits doc ids to top 100
 
     String idField = rsp.getValues()._getStr(UNIQUE_KEY_FIELD_PARAM, null);
     assertNotNull(idField);
@@ -482,6 +520,44 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     // PUT /schema-designer/update
     schemaDesignerAPI.updateSchemaObject(req, rsp);
     assertNotNull(rsp.getValues().get("field"));
+    rspData = rsp.getValues().toSolrParams();
+    schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+
+    // add a new type
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    stream = new ContentStreamBase.FileStream(getFile("schema-designer/add-new-type.json"));
+    stream.setContentType(JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+    rsp = new SolrQueryResponse();
+
+    // POST /schema-designer/add
+    schemaDesignerAPI.addSchemaObject(req, rsp);
+    final String expectedTypeName = "test_txt";
+    assertEquals(expectedTypeName, rsp.getValues().get("add-field-type"));
+    rspData = rsp.getValues().toSolrParams();
+    schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+    assertNotNull(rsp.getValues().get("fieldTypes"));
+    List<SimpleOrderedMap<Object>> fieldTypes = (List<SimpleOrderedMap<Object>>) rsp.getValues().get("fieldTypes");
+    Optional<SimpleOrderedMap<Object>> expected = fieldTypes.stream().filter(m -> expectedTypeName.equals(m.get("name"))).findFirst();
+    assertTrue("New field type '" + expectedTypeName + "' not found in add type response!", expected.isPresent());
+
+    reqParams.clear();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    stream = new ContentStreamBase.FileStream(getFile("schema-designer/update-type.json"));
+    stream.setContentType(JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+    rsp = new SolrQueryResponse();
+
+    // POST /schema-designer/update
+    schemaDesignerAPI.updateSchemaObject(req, rsp);
     rspData = rsp.getValues().toSolrParams();
     schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
 

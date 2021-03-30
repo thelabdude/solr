@@ -33,7 +33,6 @@ limitations under the License.
             <button id="addField" class="action" ng-click="toggleAddField('field')" ng-show="showSchemaActions"><span>Add Field</span></button>
             <button id="addFieldType" class="action" ng-click="toggleAddField('type')" ng-show="showSchemaActions"><span>Add Field Type</span></button>
             <div id="updateStatusMessage" ng-class="{working: updateWorking}" ng-show="updateStatusMessage"><span>{{updateStatusMessage}}</span></div>
-            <!-- <button id="addCopyField" class="action" ng-click="toggleAddCopyField()"><span>Add Copy Field</span></button> -->
 
             <div class="action add" data-rel="add" ng-show="showAddField" escape-pressed="hideAll()">
 
@@ -187,40 +186,25 @@ limitations under the License.
 
               </div>
 
-              <p class="clearfix">
+              <p class="clearfix" ng-show="adding=='type'">
                 <a ng-click="showAnalysisJson=!showAnalysisJson">
                   <span class="add_showhide" ng-hide="showAnalysisJson">Show text analysis JSON</span>
                   <span class="add_showhide open" ng-show="showAnalysisJson">Hide text analysis JSON</span>
                 </a>
               </p>
-
               <div ng-show="showAnalysisJson">
                   <textarea ng-model="textAnalysisJson" name="add_analysis_json" id="add_analysis_json" title="Text Analysis JSON" rows="8" cols="40" placeholder=""></textarea>
               </div>
 
-              <div ng-repeat="error in addErrors" ng-show="addErrors" class="clearfix note error"><span>{{error}}</span></div>
               <p class="clearfix buttons">
                 <button type="submit" class="submit" ng-class="{success: added}" ng-click="addField()"><span>Add</span></button>
                 <button type="reset" class="reset" ng-click="toggleAddField()"><span>Cancel</span></button>
               </p>
+
+              <div id="add-errors">
+                <div ng-repeat="error in addErrors" ng-show="addErrors" class="error"><span>{{error}}</span></div>
+              </div>
             </div>
-
-            <!--
-            <div class="copyfield add" data-rel="add" ng-show="showAddCopyField" escape-pressed="hideAll()">
-              <p class="clearfix"><label for="add_source">source:</label>
-                <input type="text" id="add_source" ng-model="copyField.source" focus-when="showAddCopyField" placeholder="specify your source field or pattern"></p>
-
-              <p class="clearfix"><label for="add_dest">destination:</label>
-                <input type="text" id="add_dest" ng-model="copyField.dest" placeholder="specify your destination field or pattern"></p>
-
-              <div ng-repeat="error in addCopyFieldErrors" ng-show="addCopyFieldErrors" class="clearfix note error"><span>{{error}}</span></div>
-
-              <p class="clearfix buttons">
-                <button type="submit" class="submit" ng-class="{success: added}" ng-click="addCopyField()"><span>Add CopyField</span></button>
-                <button type="reset" class="reset" ng-click="toggleAddCopyField()"><span>Cancel</span></button>
-              </p>
-            </div>
-            -->
           </div>
         </div>
         <div class="right">
@@ -584,7 +568,12 @@ limitations under the License.
                   </div>
                 </div>
                 <div id="field-analysis" ng-show="analysis.data.tokenized">
-                  <ul class="analyzer">
+                  <div id="edit-analysis-json-link" ng-show="!selectedNode.type"><a ng-click="toggleShowAnalysisJson()" class="toggle">{{editAnalysis}}</a></div>
+                  <div id="show-analysis-json" ng-show="showAnalysisJson">
+                    <textarea id="analysis-json" ng-change="markSelectedUpdated($event)" ng-model="analysisJsonText" rows="6" cols="60"></textarea>
+                  </div>
+                  <div id="hide-analysis-json" ng-show="!showAnalysisJson">
+                    <ul class="analyzer">
                     <li class="clearfix {{analyzer.key}}" ng-class="{open: analyzer.show}" ng-repeat="analyzer in analysis.analyzers">
                       <p><span>{{analyzer.name}}&nbsp;Analyzer:</span></p>
                       <dl>
@@ -603,6 +592,7 @@ limitations under the License.
                       </ul>
                     </li>
                   </ul>
+                  </div>
                 </div>
               </div>
             </form>
@@ -751,7 +741,7 @@ limitations under the License.
                 <tbody>
                 <tr ng-repeat="row in resultsData" ng-class="{odd:$odd}">
                   <td class="hit-field"><span ng-show="!row.type">{{row.name}}</span><span ng-show="row.type === 'f'"><a ng-click="selectField($event)">{{row.name}}</a></span></td>
-                  <td class="hit-value" width="400">{{row.value}}</td>
+                  <td class="hit-value" width="500">{{row.value}}</td>
                 </tr>
                 </tbody>
               </table>

@@ -696,12 +696,25 @@ limitations under the License.
   width: 71%;
 }
 
-#content #designer .schema-actions .error
+#content #designer #add-errors
+{
+  float: left;
+  margin-top:10px;
+  margin-bottom: 10px;
+  min-height: 30px;
+}
+
+#content #designer #add-errors .error
 {
   background-image: url( ../../img/ico/cross-button.png );
-  background-position: 22% 1px;
+  background-position: 10px 1px;
   color: #c00;
   font-weight: bold;
+}
+
+#content #designer #add-errors .error span
+{
+  margin-left: 30px;
 }
 
 #content #designer .schema-actions .chosen-container
@@ -1346,4 +1359,16 @@ limitations under the License.
 #content #designer #error-dialog-details {
   min-height: 80px;
   margin-bottom: 15px;
+}
+
+#content #designer #edit-analysis-json-link {
+  margin-top: 10px;
+  float: right;
+}
+
+#content #designer #edit-analysis-json-link a {
+  cursor: pointer;
+  color: #003eff;
+  text-decoration-line: underline;
+  text-decoration-color: #003eff;
 }

@@ -158,7 +158,7 @@ public class SchemaDesignerAPI {
 
   static final int MAX_SAMPLE_DOCS = 1000;
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-  private static final String DESIGNER_PREFIX = "_designer_";
+  private static final String DESIGNER_PREFIX = "._designer_";
   private static final Set<String> excludeConfigSetNames = new HashSet<>(Arrays.asList(DEFAULT_CONFIGSET_NAME, ".system"));
   private static final Set<String> removeFieldProps = new HashSet<>(Arrays.asList("href", "id", "copyDest"));
 

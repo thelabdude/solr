@@ -650,7 +650,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     var nodeId = "files/" + $scope.selectedFile;
     var params = {path: "file", file: $scope.selectedFile, configSet: $scope.currentSchema};
 
-    $scope.selectedUpdated = true;
     $scope.updateWorking = true;
     $scope.updateStatusMessage = "Updating file ...";
 

@@ -888,12 +888,14 @@ public class SchemaDesignerAPI {
           "'" + DEFAULT_CONFIGSET_NAME + "' is a reserved configSet name! Please choose a different name.");
     }
 
+    String sampleSource = "";
     List<SolrInputDocument> docs = null;
     String sampleDocumentsText = null;
     ContentStream stream = extractSingleContentStream(req, false);
     if (stream != null && stream.getContentType() != null) {
       SampleDocuments sampleDocs = sampleDocLoader.load(req.getParams(), stream, MAX_SAMPLE_DOCS);
       docs = sampleDocs.parsed;
+      sampleSource = sampleDocs.getSource();
       if (!docs.isEmpty()) {
         // user posted in some docs, if there are already docs stored in the blob store, then add these to the existing set
         List<SolrInputDocument> stored = loadSampleDocsFromBlobStore(configSet);
@@ -911,6 +913,7 @@ public class SchemaDesignerAPI {
     if (docs == null || docs.isEmpty()) {
       // no sample docs in the request ... find in blob store (or fail if no docs previously stored)
       docs = loadSampleDocsFromBlobStore(configSet);
+      sampleSource = "blob";
       if (docs.isEmpty()) {
         // no docs, but if this schema has already been published, it's OK, we can skip the docs part
         if (!zkStateReader().getConfigManager().configExists(configSet)) {
@@ -1047,6 +1050,7 @@ public class SchemaDesignerAPI {
     if (sampleDocumentsText != null) {
       response.put("sampleDocuments", sampleDocumentsText);
     }
+    response.put("sampleSource", sampleSource);
 
     rsp.getValues().addAll(response);
   }

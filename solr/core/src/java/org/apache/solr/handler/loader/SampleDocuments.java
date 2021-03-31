@@ -43,6 +43,10 @@ public class SampleDocuments {
     this.uploadedBytes = uploadedBytes;
   }
 
+  public String getSource() {
+    return fileSource != null ? fileSource : "paste";
+  }
+
   private boolean isTextContentType() {
     if (contentType == null) {
       return false;

@@ -622,7 +622,7 @@ limitations under the License.
 
 #content #designer #schema-actions {
   float: left;
-  width: 100%;
+  width: 99%;
 }
 
 #content #designer .schema-actions #addField { margin-right: 15px; }

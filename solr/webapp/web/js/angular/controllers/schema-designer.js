@@ -356,9 +356,22 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
             $scope.updateStatusMessage = "Changes applied successfully.";
             $timeout(function () {
               delete $scope.updateStatusMessage;
-            }, 2000);
+            }, 3000);
           } else {
-            delete $scope.updateStatusMessage;
+            var source = data.sampleSource;
+            if (source) {
+              if (source === "paste") {
+                source = "pasted sample"
+              } else if (source === "blob") {
+                source = "previous upload stored on the server"
+              }
+              $scope.updateStatusMessage = "Analyzed "+data.numDocs+" docs from "+source;
+              $timeout(function () {
+                delete $scope.updateStatusMessage;
+              }, 5000);
+            } else {
+              delete $scope.updateStatusMessage;
+            }
           }
         }
 

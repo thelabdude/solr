@@ -775,14 +775,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       $scope.indexText = "";
       $scope.result = {};
     }
-
-    if (id) {
-      var selected_node = jst.get_selected();
-      if (selected_node) {
-        jst.deselect_node(selected_node);
-      }
-      jst.select_node(id, true);
-    }
   };
 
   function addFileNode(dirs, parent, f) {

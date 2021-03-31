@@ -21,10 +21,10 @@ limitations under the License.
 
       <div id="schema-selector">
         <div class="left">
-          <select placeholder-text-single="'Schema Selector'"
+          <select id="select-schema" placeholder-text-single="'Schema Selector'"
+                  chosen
                 ng-model="currentSchema"
-                chosen
-                ng-change="loadSchema(currentSchema)"
+                ng-change="loadSchema()"
                 ng-options="schema for schema in schemas"></select>
           <button id="add" class="action" ng-click="showNewSchemaDialog()"><span>New Schema</span></button>
         </div>
@@ -708,7 +708,7 @@ limitations under the License.
               </div>
               <div class="field-form-right">
                 <label for="ff" title="Facet field">Facet fields</label>
-                <select multiple ng-model="selectedFacets" id="ff" size="6" ng-options="ff for ff in facetFields"></select>
+                <select multiple ng-model="selectedFacets" id="ff" size="7" ng-options="ff for ff in facetFields"></select>
                 <a ng-click="showHelp('queryFacetHelp')"><img class="help-ico" src="img/ico/question-white.png"/></a>
                 <div id="queryFacetHelp" class="help" ng-show="helpId === 'queryFacetHelp'">
                   <div class="help">

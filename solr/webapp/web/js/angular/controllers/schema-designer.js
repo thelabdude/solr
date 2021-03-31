@@ -63,6 +63,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.updateStatusMessage = "";
     $scope.analysisVerbose = false;
     $scope.updateWorking = false;
+    $scope.currentSchema = "";
 
     delete $scope.hasDocsOnServer;
     delete $scope.queryResultsTree;
@@ -71,7 +72,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.copyFrom = "_default";
     delete $scope.sampleMessage;
     delete $scope.sampleDocuments;
-    delete $scope.fileUpload;
 
     $scope.schemaVersion = -1;
     $scope.schemaTree = {};
@@ -141,20 +141,23 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
   };
 
   $scope.cancelEditSchema = function () {
-    delete $scope.currentSchema;
+    $scope.currentSchema = "";
     $scope.showConfirmEditSchema = false;
   };
 
-  $scope.loadSchema = function (schema) {
-    if (!schema) {
+  $scope.loadSchema = function () {
+
+    if (!$scope.currentSchema) {
       return;
     }
 
-    var params = {path: "info"};
-    params.configSet = schema;
-
+    $scope.resetSchema();
+    var params = {path: "info", configSet: $scope.currentSchema};
     SchemaDesigner.get(params, function (data) {
-      $scope.confirmSchema = schema;
+      $scope.currentSchema = data.configSet;
+      $("#select-schema").trigger("chosen:updated");
+
+      $scope.confirmSchema = data.configSet;
       $scope.collectionsForConfig = data.collections;
       $scope.hasDocsOnServer = data.numDocs > 0;
       $scope.published = data.published;
@@ -178,7 +181,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
   };
 
   $scope.addSchema = function () {
-    delete $scope.sampleMessage;
+    $scope.resetSchema();
     $scope.firstSchemaMessage = false;
 
     if (!$scope.newSchema) {
@@ -284,15 +287,12 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     delete $scope.designerAPIError;
     delete $scope.designerAPIErrorDetails;
     delete $scope.selectedFacets;
-    delete $scope.fileUpload;
     delete $scope.sampleDocuments;
     delete $scope.selectedNode;
     delete $scope.queryResultsTree;
   };
 
   $scope.onSchemaUpdated = function (schema, data, nodeId) {
-    delete $scope.fileUpload;
-
     $scope.hasDocsOnServer = data.numDocs && data.numDocs > 0;
     $scope.uniqueKeyField = data.uniqueKeyField;
     $scope.updateUniqueKeyField = $scope.uniqueKeyField;
@@ -915,7 +915,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     // if they upload a file containing a small (<15K) of text data, then we'll show it in the textarea
     // they can change the text and re-analyze too
     // if no changes or nothing uploaded, the server-side uses the latest sample data stored in the blob store
-
     if ($scope.fileUpload) {
       var file = $scope.fileUpload;
       var fd = new FormData();
@@ -924,9 +923,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         if (data.sampleDocuments) {
           $scope.sampleDocuments = data.sampleDocuments;
         }
-        if (data.numDocs > 0) {
-          delete $scope.fileUpload; // docs are on the server ... we don't need to keep uploading them
-        }
+        delete $scope.fileUpload;
         $scope.onSchemaUpdated(schema, data, nodeId);
       }, $scope.errorHandler);
     } else {
@@ -1222,7 +1219,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       $scope.currentSchema = data.configSet;
 
       delete $scope.selectedNode;
-      delete $scope.currentSchema;
+      $scope.currentSchema = "";
       delete $scope.newSchema;
       $scope.showPublish = false;
       $scope.refresh();
@@ -1437,6 +1434,9 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     }
 
     SchemaDesigner.get(params, function (data) {
+      $("#sort").trigger("chosen:updated");
+      $("#ff").trigger("chosen:updated");
+
       $scope.renderResultsTree(data);
       $scope.onSelectQueryResultsNode("/");
     });

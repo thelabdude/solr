@@ -357,7 +357,9 @@ limitations under the License.
 }
 
 #query-buttons{
+  margin-top: 20px;
   float: right;
+  margin-right: 8px;
 }
 
 #content #designer #queryButton span

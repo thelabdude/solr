@@ -21,6 +21,7 @@ import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,6 +29,7 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.lang.invoke.MethodHandles;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -98,11 +100,13 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
     List<SolrInputDocument> docs = null;
     if (stream.getSize() > 0) {
       if (contentType.contains(JSON_MIME)) {
-        docs = loadJsonDocs(params, stream, maxDocsToLoad);
+        docs = loadJsonDocs(params, stream, maxDocsToLoad, uploadedBytes);
       } else if (contentType.contains("text/xml") || contentType.contains("application/xml")) {
         docs = loadXmlDocs(params, stream, maxDocsToLoad);
       } else if (contentType.contains("text/csv") || contentType.contains("application/csv")) {
         docs = loadCsvDocs(params, stream, maxDocsToLoad);
+      } else if (contentType.contains("text/plain")) {
+        docs = loadJsonLines(params, stream, maxDocsToLoad);
       } else {
         throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, contentType + " not supported yet!");
       }
@@ -121,22 +125,60 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
   }
 
   @SuppressWarnings("unchecked")
-  protected List<SolrInputDocument> loadJsonDocs(SolrParams params, ContentStream stream, final int maxDocsToLoad) throws IOException {
-    final Object json;
-    try (Reader reader = stream.getReader()) {
-      json = ObjectBuilder.getVal(new JSONParser(reader));
+  protected List<SolrInputDocument> loadJsonLines(SolrParams params, ContentStream stream, final int maxDocsToLoad) throws IOException {
+    List<Map<String, Object>> docs = new LinkedList<>();
+    try (Reader r = stream.getReader()) {
+      BufferedReader br = new BufferedReader(r);
+      String line;
+      while ((line = br.readLine()) != null) {
+        line = line.trim();
+        if (!line.isEmpty() && line.startsWith("{") && line.endsWith("}")) {
+          Object jsonLine = ObjectBuilder.getVal(new JSONParser(line));
+          if (jsonLine instanceof Map) {
+            docs.add((Map<String, Object>) jsonLine);
+          }
+        }
+      }
     }
+
+    if (maxDocsToLoad > 0 && docs.size() > maxDocsToLoad) {
+      docs = docs.subList(0, maxDocsToLoad);
+    }
+
+    return docs.stream().map(JsonLoader::buildDoc).collect(Collectors.toList());
+  }
+
+  @SuppressWarnings("unchecked")
+  protected List<SolrInputDocument> loadJsonDocs(SolrParams params, ContentStream stream, final int maxDocsToLoad, byte[] uploadedBytes) throws IOException {
+    byte[] jsonBytes = uploadedBytes != null ? uploadedBytes : streamAsBytes(stream.getStream());
+    String jsonStr = new String(jsonBytes, StandardCharsets.UTF_8);
+    final Object json = ObjectBuilder.getVal(new JSONParser(jsonStr));
     if (json == null) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Expected at least 1 JSON doc in the request body!");
     }
+
     List<Map<String, Object>> docs;
     if (json instanceof List) {
       // list of docs
       docs = (List<Map<String, Object>>) json;
     } else if (json instanceof Map) {
-      // single doc ...
-      // TODO: try to find the split path by looking for the first path the results in multiple docs
-      docs = Collections.singletonList((Map<String, Object>) json);
+      // single doc ... make sure this is not a json lines file
+      boolean isJsonLines = false;
+      String[] lines = jsonStr.split("\n");
+      if (lines.length > 1) {
+        for (String line : lines) {
+          line = line.trim();
+          if (!line.isEmpty() && line.startsWith("{") && line.endsWith("}")) {
+            isJsonLines = true;
+            break;
+          }
+        }
+      }
+      if (isJsonLines) {
+        docs = loadJsonLines(lines);
+      } else {
+        docs = Collections.singletonList((Map<String, Object>) json);
+      }
     } else {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Expected one or more JSON docs in the request body!");
     }
@@ -207,6 +249,21 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
           }
       }
     }
+  }
+
+  @SuppressWarnings("unchecked")
+  protected List<Map<String, Object>> loadJsonLines(String[] lines) throws IOException {
+    List<Map<String, Object>> docs = new ArrayList<>(lines.length);
+    for (String line : lines) {
+      line = line.trim();
+      if (!line.isEmpty() && line.startsWith("{") && line.endsWith("}")) {
+        Object jsonLine = ObjectBuilder.getVal(new JSONParser(line));
+        if (jsonLine instanceof Map) {
+          docs.add((Map<String, Object>) jsonLine);
+        }
+      }
+    }
+    return docs;
   }
 
   protected String readInputAsString(InputStream in) throws IOException {

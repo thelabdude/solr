@@ -718,6 +718,10 @@ limitations under the License.
                 </div>
               </div>
               <div class="field-form-right">
+                <label for="hl" title="Highlight">Highlighting</label>
+                <select chosen placeholder-text-single="'Select Field'" id="hl" ng-model="query.highlight" ng-options="field for field in hlFields"></select>
+              </div>
+              <div class="field-form-right">
                 <label for="rawParams" title="Additional params">Additional params</label>
                 <textarea name="q" ng-model="rawParams" id="rawParams" rows="1" cols="30" title="Additional URL params"></textarea>
               </div>

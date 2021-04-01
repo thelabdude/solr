@@ -325,6 +325,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.sortableFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.multiValued).map(f => f.name).sort();
     $scope.sortableFields.push("score");
     $scope.facetFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.tokenized && f.name !== '_version_').map(f => f.name).sort();
+    $scope.hlFields = data.fields.filter(f => f.stored && f.tokenized).map(f => f.name).sort();
 
     $scope.schemaVersion = data.schemaVersion;
     $scope.currentSchema = data.configSet;
@@ -1295,6 +1296,25 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     return children;
   }
 
+  function hlToTree(hl) {
+    var children = [];
+    for (var f in hl) {
+      var nodeId = "hl/" + f;
+      var tdata = [];
+      var obj = hl[f];
+      for (var a in obj) {
+        var v = obj[a];
+        if (v && v.length > 0) {
+          tdata.push({name: a, value: v[0]});
+        }
+      }
+      if (tdata.length > 0) {
+        children.push({"text": f, "a_attr": {"href": nodeId}, "tdata": tdata, "id": nodeId, "children": []});
+      }
+    }
+    return children;
+  }  
+
   $scope.selectField = function (event) {
     var t = event.target || event.srcElement || event.currentTarget;
     if (t && t.text) {
@@ -1349,6 +1369,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       "a_attr": {"href": "docs"},
       "children": docsToTree(data.response.docs)
     }];
+
     if (data.facet_counts && data.facet_counts.facet_fields) {
       rootChildren.push({
         "text": "Facets",
@@ -1357,7 +1378,23 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         "children": facetsToTree(data.facet_counts.facet_fields)
       });
     }
-    rootChildren.push({"text": "Debug", "a_attr": {"href": "debug"}, "children": debugToTree(data.debug)});
+
+    if (data.highlighting) {
+      var hlNodes = hlToTree(data.highlighting);
+      if (hlNodes.length > 0) {
+        rootChildren.push({
+          "text": "Highlighting",
+          "state": {"opened": true},
+          "a_attr": {"href": "hl"},
+          "children": hlNodes
+        });
+      }
+    }
+
+    if (data.debug) {
+      rootChildren.push({"text": "Debug", "a_attr": {"href": "debug"}, "children": debugToTree(data.debug)});
+    }
+
     var tree = [{"text": "Results", "a_attr": {"href": "/"}, "children": rootChildren}];
     $scope.queryResultsTree = tree;
   };
@@ -1376,6 +1413,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     var jst = $('#queryResultsJsTree').jstree();
     var node = jst.get_node(id);
     if (!node || !node.a_attr) {
+      $scope.resultsData = $scope.resultsMeta;
       return;
     }
 
@@ -1423,7 +1461,10 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     }
 
     params["sort"] = $scope.query.sortBy + " " + $scope.query.sortDir;
-    params["q"] = $scope.query.q;
+    params["q"] = $scope.query.q.trim();
+    if (!params["q"]) {
+      params["q"] = "*:*";
+    }
 
     if ($scope.rawParams) {
       var rawParams = $scope.rawParams.split(/[&\n]/);
@@ -1438,6 +1479,25 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       }
     }
 
+    if (params["q"] !== '*:*' && $scope.query.highlight) {
+      params["hl"] = true;
+      params["hl.fl"] = $scope.query.highlight;
+      if (!params["hl.method"]) {
+        // lookup the field props
+        var method = "unified";
+        var field = $scope.fields.find(f => f.name === $scope.query.highlight);
+        if (field) {
+          if (field.termVectors && field.termOffsets && field.termPositions) {
+            method = "fastVector";
+          }
+        }
+        params["hl.method"] = method;
+      }
+    } else {
+      delete params["hl"];
+      delete params["hl.fl"];
+    }
+
     var qt = params["qt"] ? params["qt"] : "/select";
     if (qt[0] === '/') {
       params.handler = qt.substring(1);
@@ -1449,9 +1509,20 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     SchemaDesigner.get(params, function (data) {
       $("#sort").trigger("chosen:updated");
       $("#ff").trigger("chosen:updated");
+      $("#hl").trigger("chosen:updated");
 
       $scope.renderResultsTree(data);
-      $scope.onSelectQueryResultsNode("/");
+
+      var nodeId = "/";
+      if ($scope.sampleDocId) {
+        if (data.response.docs) {
+          var hit = data.response.docs.find(d => d[$scope.uniqueKeyField] === $scope.sampleDocId);
+          if (hit) {
+            nodeId = "doc/"+$scope.sampleDocId;
+          }
+        }
+      }
+      $scope.onSelectQueryResultsNode(nodeId);
     });
   };
 

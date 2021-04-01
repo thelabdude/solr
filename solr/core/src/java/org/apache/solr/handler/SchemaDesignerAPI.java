@@ -350,7 +350,7 @@ public class SchemaDesignerAPI {
     String textValue = null;
     if (isEmpty(docId)) {
       // no doc ID from client ... find the first doc with a non-empty string value for fieldName
-      Optional<SolrInputDocument> doc = docs.stream().filter(d -> d.getFieldValue(fieldName) != null).findFirst();
+      Optional<SolrInputDocument> doc = docs.stream().filter(d -> d.getFieldValue(fieldName) != null && !d.getFieldValue(fieldName).toString().isEmpty()).findFirst();
       if (doc.isPresent()) {
         docId = doc.get().getFieldValue(idField).toString();
         textValue = doc.get().getFieldValue(fieldName).toString();

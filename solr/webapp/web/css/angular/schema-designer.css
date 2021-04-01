@@ -1374,3 +1374,7 @@ limitations under the License.
   text-decoration-line: underline;
   text-decoration-color: #003eff;
 }
+
+#content #designer #tree-filters-type {
+  width: 90px;
+}

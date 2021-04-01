@@ -47,5 +47,18 @@
     "inStock" : true,
     "price" : 30.50,
     "pages_i" : 475
+  },
+  {
+    "id" : "978-1617291029",
+    "cat" : ["book","paperback"],
+    "name" : "Solr in Action",
+    "author" : ["Trey Grainger","Timothy Potter"],
+    "sequence_i" : 1,
+    "genre_s" : "IT",
+    "inStock" : true,
+    "price" : 39.99,
+    "pages_i" : 664,
+    "description": "Solr in Action is a comprehensive guide to implementing scalable search using Apache Solr. This clearly written book walks you through well-documented examples ranging from basic keyword searching to scaling a system for billions of documents and queries. It will give you a deep understanding of how to implement core Solr capabilities."
   }
+
 ]

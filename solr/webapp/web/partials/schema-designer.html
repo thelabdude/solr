@@ -327,6 +327,20 @@ limitations under the License.
       <div class="block" id="schema-editor">
         <h2><span>Schema Editor</span></h2>
         <div id="tree-content" class="content clearfix" ng-show="showSchemaActions">
+          <div id="tree-filters">
+            Filter by:&nbsp;<select id="tree-filters-cat"
+                ng-model="treeFilter"
+                ng-change="applyTreeFilterOption()">
+              <option value=""></option>
+              <option value="type">type</option>
+              <option value="feature">feature</option>
+            </select>
+            <select id="tree-filters-options"
+                    type="text"
+                    ng-model="treeFilterOption"
+                    ng-change="onTreeFilterOptionChanged()"
+                    ng-options="option for option in treeFilterOptions"></select>
+          </div>
           <jstree class="tree" on-select="onSelectSchemaTreeNode(url)" id="schemaJsTree" data="schemaTree"></jstree>
         </div>
         <div id="tree-node-content" ng-show="showFieldDetails">

@@ -302,12 +302,14 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     var files = filesToTree(data.files);
 
     var rootChildren = [];
-    rootChildren.push({
+    $scope.fieldsSrc = fieldsToTree(data.fields);
+    $scope.fieldsNode = {
       "text": "Fields",
       "state": {"opened": true},
       "a_attr": {"href": "fields"},
-      "children": fieldsToTree(data.fields)
-    });
+      "children": $scope.fieldsSrc
+    };
+    rootChildren.push($scope.fieldsNode);
 
     if ($scope.enableDynamicFields === "true") {
       var dynamicFields = fieldsToTree(data.dynamicFields);
@@ -322,7 +324,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.fields = data.fields;
     $scope.fieldNames = data.fields.map(f => f.name).sort();
     $scope.possibleIdFields = data.fields.filter(f => f.indexed && f.stored && !f.tokenized).map(f => f.name).sort();
-    $scope.sortableFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.multiValued).map(f => f.name).sort();
+    $scope.sortableFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.multiValued && !tokenized).map(f => f.name).sort();
     $scope.sortableFields.push("score");
     $scope.facetFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.tokenized && f.name !== '_version_').map(f => f.name).sort();
     $scope.hlFields = data.fields.filter(f => f.stored && f.tokenized).map(f => f.name).sort();
@@ -734,8 +736,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       return;
     }
 
-    var jst = $('#schemaJsTree').jstree();
-    var node = jst.get_node(id);
+    var node = $('#schemaJsTree').jstree(true).get_node(id);
     if (!node) {
       return;
     }
@@ -780,7 +781,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.selectedNode = applyConstraintsOnField($scope.selectedNode);
     $scope.showFieldDetails = true;
 
-    if (nodeType === "field" && $scope.selectedNode.tokenized) {
+    if (nodeType === "field" && $scope.selectedNode.tokenized && $scope.selectedNode.stored) {
       $scope.showAnalysis = true;
       $scope.updateSampleDocId();
     } else {
@@ -1548,6 +1549,115 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       }
       $scope.analysisJsonText = JSON.stringify(analysisJson, null, 2);
     }
+  };
+
+  $scope.onTreeFilterOptionChanged = function() {
+    if (!$scope.fieldsNode) {
+      return;
+    }
+
+    if (!$scope.treeFilter || !$scope.treeFilterOption || $scope.treeFilterOption === "*") {
+      $scope.fieldsNode.children = $scope.fieldsSrc;
+      $('#schemaJsTree').jstree(true).refresh();
+      return;
+    }
+
+    if ($scope.treeFilter === "type") {
+      var children = [];
+      for (var f in $scope.fieldsSrc) {
+        var field = $scope.fieldsSrc[f];
+        if (field.a_attr && field.a_attr.type === $scope.treeFilterOption) {
+          children.push(field);
+        }
+      }
+      $scope.fieldsNode.children = children;
+    } else if ($scope.treeFilter === "feature") {
+      var children = [];
+      for (var f in $scope.fieldsSrc) {
+        var field = $scope.fieldsSrc[f];
+        if (field.a_attr) {
+          var opt = $scope.treeFilterOption;
+          var attr = field.a_attr;
+          if (opt === "indexed") {
+            if (attr.indexed) {
+              children.push(field);
+            }
+          } else if (opt === "text") {
+            if (attr.tokenized) {
+              children.push(field);
+            }
+          } else if (opt === "facet") {
+            if ((attr.indexed || attr.docValues) && !attr.tokenized && attr.name !== '_version_') {
+              children.push(field);
+            }
+          } else if (opt === "highlight") {
+            if (attr.stored && attr.tokenized) {
+              children.push(field);
+            }
+          } else if (opt === "sortable") {
+            if ((attr.indexed || attr.docValues) && !attr.multiValued) {
+              children.push(field);
+            }
+          } else if (opt === "docValues") {
+            if (attr.docValues) {
+              children.push(field);
+            }
+          } else if (opt === "stored") {
+            if (attr.stored || (attr.docValues && attr.useDocValuesAsStored)) {
+              children.push(field);
+            }
+          }
+        }
+      }
+      $scope.fieldsNode.children = children;
+    } else {
+      // otherwise, restore the tree to original state
+      $scope.fieldsNode.children = $scope.fieldsSrc;
+    }
+    $('#schemaJsTree').jstree(true).refresh();
+
+    var nodeId = "/"
+    if ($scope.fieldsNode.children.length > 0) {
+      if ($scope.selectedNode) {
+        var found = $scope.fieldsNode.children.find(n => n.a_attr.name === $scope.selectedNode.name);
+        if (found) {
+          nodeId = $scope.selectedNode.href;
+        } else {
+          delete $scope.selectedNode;
+          nodeId = $scope.fieldsNode.children[0].a_attr.href;
+        }
+      } else {
+        nodeId = $scope.fieldsNode.children[0].a_attr.href;
+      }
+    }
+    $scope.onSelectSchemaTreeNode(nodeId);
+    $('#schemaJsTree').jstree(true).select_node(nodeId);
+  };
+
+  $scope.applyTreeFilterOption = function() {
+    if (!$scope.fields) {
+      return;
+    }
+
+    $scope.treeFilterOptions = [];
+    $scope.treeFilterOption = "";
+    if ($scope.treeFilter === "type") {
+      var usedFieldTypes = [];
+      var usedTypes = $scope.fields.map(f => f.type);
+      for (var t in usedTypes) {
+        if (!usedFieldTypes.includes(usedTypes[t])) {
+          usedFieldTypes.push(usedTypes[t]);
+        }
+      }
+      $scope.treeFilterOptions = usedFieldTypes.sort();
+      $scope.treeFilterOptions.unshift("*");
+      $scope.treeFilterOption = "*";
+    } else if ($scope.treeFilter === "feature") {
+      $scope.treeFilterOptions = ["indexed","text","facet","highlight","sortable","docValues","stored"].sort();
+      $scope.treeFilterOptions.unshift("*");
+      $scope.treeFilterOption = "*";
+    }
+    $scope.onTreeFilterOptionChanged();
   };
 
   $scope.refresh();

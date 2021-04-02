@@ -324,8 +324,9 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.fields = data.fields;
     $scope.fieldNames = data.fields.map(f => f.name).sort();
     $scope.possibleIdFields = data.fields.filter(f => f.indexed && f.stored && !f.tokenized).map(f => f.name).sort();
-    $scope.sortableFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.multiValued && !tokenized).map(f => f.name).sort();
+    $scope.sortableFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.multiValued && !f.tokenized).map(f => f.name).sort();
     $scope.sortableFields.push("score");
+
     $scope.facetFields = data.fields.filter(f => (f.indexed || f.docValues) && !f.tokenized && f.name !== '_version_').map(f => f.name).sort();
     $scope.hlFields = data.fields.filter(f => f.stored && f.tokenized).map(f => f.name).sort();
 

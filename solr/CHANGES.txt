@@ -241,12 +241,18 @@ Other Changes
 * SOLR-15292: SignatureUpdateProcessorFactory will fail to initialize if it is used in a SolrCloud cluster in a way that is
   known to be problematic with multiple replicas.  (hossman)
 
+* SOLR-15258: Consolidate ConfigSet handling (C.R.U.D.) into ConfigSetService to allow for viable
+  alternative implementations of where ConfigSets come from.
+  (Nazerke Seidan, David Smiley)
+
 Bug Fixes
 ---------------------
 * SOLR-14546: Fix for a relatively hard to hit issue in OverseerTaskProcessor that could lead to out of order execution
   of Collection API tasks competing for a lock (Ilan Ginzburg).
 
 * SOLR-15162: Allow readOnly parameter to be used with v2 modify collection command (Eric Pugh)
+
+* SOLR-15233: Set doAs param in ConfigurableInternodeAuthHadoopPlugin (Geza Nagy, Jason Gerlowski, Mike Drob)
 
 ==================  8.9.0 ==================
 
@@ -316,6 +322,9 @@ Bug Fixes
 
 * SOLR-15273: Fix NullPointerException in StoredFieldsShardResponseProcessor that happened when a field name alias is
   used for the unique key field in searches with distributed result grouping. (limingnihao via Christine Poerschke)
+
+* SOLR-11921: Move "cursorMark" logic from QueryComponent to SearchHandler so it can work with things like QueryElevationComponent
+  that modify the SortSpec in prepare(), as well as possible custom "search" components other then QueryComponent.  (hossman)
 
 Other Changes
 ---------------------

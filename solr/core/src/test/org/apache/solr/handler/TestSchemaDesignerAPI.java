@@ -33,7 +33,6 @@ import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.cloud.SolrZkClient;
-import org.apache.solr.common.cloud.ZkConfigManager;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
@@ -122,8 +121,6 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     ContentStream stream = new ContentStreamBase.StringStream(tsv, "text/csv");
     when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
 
-    rsp = new SolrQueryResponse();
-
     // POST /schema-designer/analyze
     schemaDesignerAPI.analyze(req, rsp);
     assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
@@ -138,7 +135,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     String mutableId = schemaDesignerAPI.getMutableId(configSet);
     assertFalse(cc.getZkController().getClusterState().hasCollection(mutableId));
     SolrZkClient zkClient = cc.getZkController().getZkClient();
-    assertFalse(zkClient.exists(ZkConfigManager.CONFIGS_ZKNODE + "/" + mutableId, true));
+    assertFalse(zkClient.exists("/configs/" + mutableId, true));
   }
 
   @Test
@@ -670,7 +667,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     String mutableId = schemaDesignerAPI.getMutableId(configSet);
     assertFalse(cc.getZkController().getClusterState().hasCollection(mutableId));
     SolrZkClient zkClient = cc.getZkController().getZkClient();
-    assertFalse(zkClient.exists(ZkConfigManager.CONFIGS_ZKNODE + "/" + mutableId, true));
+    assertFalse(zkClient.exists("/configs/" + mutableId, true));
     final List<SolrInputDocument> docs = schemaDesignerAPI.loadSampleDocsFromBlobStore(configSet);
     assertTrue(docs.isEmpty());
 

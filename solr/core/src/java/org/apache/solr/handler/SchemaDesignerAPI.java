@@ -71,6 +71,7 @@ import org.apache.solr.client.solrj.request.schema.FieldTypeDefinition;
 import org.apache.solr.client.solrj.request.schema.SchemaRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.schema.SchemaResponse;
+import org.apache.solr.cloud.ZkConfigSetService;
 import org.apache.solr.cloud.ZkController;
 import org.apache.solr.cloud.ZkSolrResourceLoader;
 import org.apache.solr.common.SolrException;
@@ -80,7 +81,6 @@ import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.UrlScheme;
-import org.apache.solr.common.cloud.ZkConfigManager;
 import org.apache.solr.common.cloud.ZkMaintenanceUtils;
 import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.SolrParams;
@@ -214,13 +214,13 @@ public class SchemaDesignerAPI {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "info");
     Map<String, Object> responseMap = new HashMap<>();
     responseMap.put(CONFIG_SET_PARAM, configSet);
-    boolean exists = zkStateReader().getConfigManager().configExists(configSet);
+    boolean exists = configExists(configSet);
     responseMap.put("published", exists);
 
     // mutable config may not exist yet as this is just an info check to gather some basic info the UI needs
     String mutableId = getMutableId(configSet);
     Map<String, Object> settings;
-    if (zkStateReader().getConfigManager().configExists(mutableId)) {
+    if (configExists(mutableId)) {
       // if there's a mutable config, prefer the settings from that first but fallback to the original if not found
       settings = getDesignerSettings(loadLatestConfig(mutableId));
     } else {
@@ -297,7 +297,7 @@ public class SchemaDesignerAPI {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "file");
     final String file = getRequiredParam("file", req, "file");
     String mutableId = getMutableId(configSet);
-    String zkPath = ZkConfigManager.CONFIGS_ZKNODE + "/" + mutableId + "/" + file;
+    String zkPath = ZkConfigSetService.CONFIGS_ZKNODE + "/" + mutableId + "/" + file;
     SolrZkClient zkClient = zkStateReader().getZkClient();
     if (!zkClient.exists(zkPath, true)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "File '" + file + "' not found in configset: " + configSet);
@@ -465,7 +465,7 @@ public class SchemaDesignerAPI {
   }
 
   protected Map<String, Boolean> listConfigs() throws IOException {
-    List<String> configsInZk = zkStateReader().getConfigManager().listConfigs();
+    List<String> configsInZk = coreContainer.getConfigSetService().listConfigs();
     final Map<String, Boolean> configs = configsInZk.stream()
         .filter(c -> !excludeConfigSetNames.contains(c) && !c.startsWith(DESIGNER_PREFIX))
         .collect(Collectors.toMap(c -> c, c -> !isDesignerDisabled(c)));
@@ -498,11 +498,10 @@ public class SchemaDesignerAPI {
     }
 
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    ZkConfigManager cfgMgr = zkStateReader().getConfigManager();
     Path tmpDirectory = Files.createTempDirectory("schema-designer-" + configSet);
     File tmpDir = tmpDirectory.toFile();
     try {
-      cfgMgr.downloadConfigDir(configId, tmpDirectory);
+      coreContainer.getConfigSetService().downloadConfig(configId, tmpDirectory);
       try (ZipOutputStream zipOut = new ZipOutputStream(baos)) {
         zipIt(tmpDir, "", zipOut);
       }
@@ -525,8 +524,7 @@ public class SchemaDesignerAPI {
 
     // an apply just copies over the temp config to the "live" location
     String mutableId = getMutableId(configSet);
-    final ZkConfigManager cfgMgr = zkStateReader().getConfigManager();
-    if (!cfgMgr.configExists(mutableId)) {
+    if (!configExists(mutableId)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           mutableId + " configSet not found! Are you sure " + configSet + " was being edited by the schema designer?");
     }
@@ -623,8 +621,7 @@ public class SchemaDesignerAPI {
 
     // an apply just copies over the temp config to the "live" location
     String mutableId = getMutableId(configSet);
-    final ZkConfigManager cfgMgr = zkStateReader().getConfigManager();
-    if (!cfgMgr.configExists(mutableId)) {
+    if (!configExists(mutableId)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           mutableId + " configSet not found! Are you sure " + configSet + " was being edited by the schema designer?");
     }
@@ -804,8 +801,7 @@ public class SchemaDesignerAPI {
 
     // an apply just copies over the temp config to the "live" location
     String mutableId = getMutableId(configSet);
-    final ZkConfigManager cfgMgr = zkStateReader().getConfigManager();
-    if (!cfgMgr.configExists(mutableId)) {
+    if (!configExists(mutableId)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           mutableId + " configSet not found! Are you sure " + configSet + " was being edited by the schema designer?");
     }
@@ -832,13 +828,12 @@ public class SchemaDesignerAPI {
       }
     }
 
-    Set<String> copiedToZkPaths = new HashSet<>();
-    if (cfgMgr.configExists(configSet)) {
+    if (configExists(configSet)) {
       SolrZkClient zkClient = coreContainer.getZkController().getZkClient();
-      zkClient.zkTransfer(ZkConfigManager.CONFIGS_ZKNODE + "/" + mutableId, true,
-          ZkConfigManager.CONFIGS_ZKNODE + "/" + configSet, true, true);
+      zkClient.zkTransfer(ZkConfigSetService.CONFIGS_ZKNODE + "/" + mutableId, true,
+          ZkConfigSetService.CONFIGS_ZKNODE + "/" + configSet, true, true);
     } else {
-      cfgMgr.copyConfigDir(mutableId, configSet, copiedToZkPaths);
+      coreContainer.getConfigSetService().copyConfig(mutableId, configSet);
     }
 
     boolean reloadCollections = req.getParams().getBool(RELOAD_COLLECTIONS_PARAM, false);
@@ -936,14 +931,14 @@ public class SchemaDesignerAPI {
       sampleSource = "blob";
       if (docs.isEmpty()) {
         // no docs, but if this schema has already been published, it's OK, we can skip the docs part
-        if (!zkStateReader().getConfigManager().configExists(configSet)) {
+        if (!configExists(configSet)) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "No sample documents provided for analyzing schema!");
         }
       }
     }
 
     // Get a mutable "temp" schema either from the specified copy source or configSet if it already exists.
-    String copyFrom = zkStateReader().getConfigManager().configExists(configSet) ? configSet
+    String copyFrom = configExists(configSet) ? configSet
         : req.getParams().get(COPY_FROM_PARAM, DEFAULT_CONFIGSET_NAME);
 
     String mutableId = getMutableId(configSet);
@@ -1098,7 +1093,7 @@ public class SchemaDesignerAPI {
   public void query(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "query");
     String mutableId = getMutableId(configSet);
-    if (!zkStateReader().getConfigManager().configExists(mutableId)) {
+    if (!configExists(mutableId)) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           mutableId + " configSet not found! Are you sure " + configSet + " was being edited by the schema designer?");
     }
@@ -1246,7 +1241,7 @@ public class SchemaDesignerAPI {
   }
 
   protected String getConfigSetZkPath(final String configSet, final String childNode) {
-    String path = ZkConfigManager.CONFIGS_ZKNODE + "/" + configSet;
+    String path = ZkConfigSetService.CONFIGS_ZKNODE + "/" + configSet;
     if (childNode != null) {
       path += "/" + childNode;
     }
@@ -1266,19 +1261,19 @@ public class SchemaDesignerAPI {
     // create new from the built-in "_default" configSet
     int publishedVersion = -1;
     boolean isNew = false;
-    if (!zkStateReader().getConfigManager().configExists(mutableId)) {
+    if (!configExists(mutableId)) {
 
       // are they opening a temp of an existing?
-      if (zkStateReader().getConfigManager().configExists(configSet)) {
+      if (configExists(configSet)) {
         if (isDesignerDisabled(configSet)) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Schema '" + configSet + "' is locked for edits by the schema designer!");
         }
         publishedVersion = getCurrentSchemaVersion(configSet);
         // ignore the copyFrom as we're making a mutable temp copy of an already published configSet
-        zkStateReader().getConfigManager().copyConfigDir(configSet, mutableId);
+        coreContainer.getConfigSetService().copyConfig(configSet, mutableId);
         copyFrom = configSet;
       } else {
-        zkStateReader().getConfigManager().copyConfigDir(copyFrom, mutableId);
+        coreContainer.getConfigSetService().copyConfig(copyFrom, mutableId);
       }
       log.info("Copied '{}' to new mutableId: {}", copyFrom, mutableId);
       isNew = true;
@@ -1572,7 +1567,7 @@ public class SchemaDesignerAPI {
 
     // files
     SolrZkClient zkClient = zkStateReader().getZkClient();
-    String configPathInZk = ZkConfigManager.CONFIGS_ZKNODE + "/" + mutableId;
+    String configPathInZk = ZkConfigSetService.CONFIGS_ZKNODE + "/" + mutableId;
     final Set<String> files = new HashSet<>();
     ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, files::add);
     files.remove(configPathInZk);
@@ -1778,7 +1773,7 @@ public class SchemaDesignerAPI {
     schema = schema.deleteFieldTypes(toRemove);
 
     SolrZkClient zkClient = coreContainer.getZkController().getZkClient();
-    final String configPathInZk = ZkConfigManager.CONFIGS_ZKNODE + "/" + configSet;
+    final String configPathInZk = ZkConfigSetService.CONFIGS_ZKNODE + "/" + configSet;
     final Set<String> toRemoveFiles = new HashSet<>();
     final Set<String> langExt = languages.stream().map(l -> "_" + l).collect(Collectors.toSet());
     try {
@@ -1833,7 +1828,7 @@ public class SchemaDesignerAPI {
 
     // Restore missing files
     SolrZkClient zkClient = zkStateReader().getZkClient();
-    String configPathInZk = ZkConfigManager.CONFIGS_ZKNODE + "/" + copyFrom;
+    String configPathInZk = ZkConfigSetService.CONFIGS_ZKNODE + "/" + copyFrom;
     final Set<String> langExt = langSet.stream().map(l -> "_" + l).collect(Collectors.toSet());
     try {
       ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, path -> {
@@ -2145,7 +2140,11 @@ public class SchemaDesignerAPI {
     // delete the sample doc blob
     cloudSolrClient.deleteByQuery(".system", "id:" + configSet + "_sample/*", 10);
     cloudSolrClient.commit(".system", true, true);
-    zkStateReader().getConfigManager().deleteConfigDir(mutableId);
+    coreContainer.getConfigSetService().deleteConfig(mutableId);
+  }
+
+  protected boolean configExists(String configSet) throws IOException {
+    return coreContainer.getConfigSetService().checkConfigExists(configSet);
   }
 
   private static class InMemoryResourceLoader extends SolrResourceLoader {

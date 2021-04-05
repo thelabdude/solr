@@ -130,7 +130,7 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
       }
     }
 
-    return new SampleDocuments(docs, contentType, fileSource, uploadedBytes);
+    return new SampleDocuments(docs, contentType, fileSource);
   }
 
   protected List<SolrInputDocument> loadCsvDocs(SolrParams params, String source, byte[] streamBytes, String charset, final int maxDocsToLoad) throws IOException {

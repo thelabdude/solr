@@ -222,7 +222,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.sampleMessage = "Please upload or paste some sample documents to analyze for building the '" + $scope.currentSchema + "' schema.";
 
     SchemaDesigner.post({path: "prep", configSet: $scope.newSchema, copyFrom: $scope.copyFrom}, null, function (data) {
-      // no-op by design ... we want this to run in the bg
+      $scope.initDesignerSettingsFromResponse(data);
     }, $scope.errorHandler);
   };
 
@@ -289,7 +289,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.showFieldDetails = false;
     $scope.hasDocsOnServer = false;
     $scope.query = {q: '*:*', sortBy: 'score', sortDir: 'desc'};
-    $scope.sampleDocuments = "";
     $scope.schemaVersion = -1;
 
     $scope.updateWorking = false;
@@ -947,9 +946,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       var fd = new FormData();
       fd.append('file', file);
       SchemaDesigner.upload(params, fd, function (data) {
-        if (data.sampleDocuments) {
-          $scope.sampleDocuments = data.sampleDocuments;
-        }
         delete $scope.fileUpload;
         $scope.onSchemaUpdated(schema, data, nodeId);
       }, $scope.errorHandler);
@@ -964,9 +960,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       }
 
       var respHandler = function (data) {
-        if (data.sampleDocuments) {
-          $scope.sampleDocuments = data.sampleDocuments;
-        }
         $scope.onSchemaUpdated(schema, data, nodeId);
       };
 

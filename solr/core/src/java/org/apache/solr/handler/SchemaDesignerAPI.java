@@ -910,7 +910,6 @@ public class SchemaDesignerAPI {
 
     String sampleSource = "";
     List<SolrInputDocument> docs = null;
-    String sampleDocumentsText = null;
     ContentStream stream = extractSingleContentStream(req, false);
     SampleDocuments sampleDocs = null;
     if (stream != null && stream.getContentType() != null) {
@@ -927,7 +926,7 @@ public class SchemaDesignerAPI {
         }
 
         // store in the blob store so we always have access to these docs
-        storeSampleDocs(configSet, docs, sampleDocs.getSampleText());
+        storeSampleDocs(configSet, docs);
       }
     }
 
@@ -940,9 +939,6 @@ public class SchemaDesignerAPI {
         if (!zkStateReader().getConfigManager().configExists(configSet)) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "No sample documents provided for analyzing schema!");
         }
-      } else {
-        // get the raw text sample docs too (if available)
-        sampleDocumentsText = loadRawSampleDocsFromBlobStore(configSet);
       }
     }
 
@@ -1002,7 +998,7 @@ public class SchemaDesignerAPI {
     List<String> problems = new LinkedList<>();
     if (!docs.isEmpty()) {
       if (ensureUniqueKey(schema.getUniqueKeyField(), docs)) {
-        storeSampleDocs(configSet, docs, null);
+        storeSampleDocs(configSet, docs);
       }
       schema = analyzeInputDocs(schemaSuggester.transposeDocs(docs), schema, problems, langs);
     }
@@ -1052,9 +1048,6 @@ public class SchemaDesignerAPI {
     Map<String, Object> response = buildResponse(configSet, schema, settings, docs);
 
     // show the uploaded data in the sample documents window if it is small'ish
-    if (sampleDocumentsText != null) {
-      response.put("sampleDocuments", sampleDocumentsText);
-    }
     response.put("sampleSource", sampleSource);
 
     if (errorsDuringIndexing != null) {
@@ -1174,49 +1167,12 @@ public class SchemaDesignerAPI {
     return docs != null ? docs : Collections.emptyList();
   }
 
-  protected String loadRawSampleDocsFromBlobStore(final String configSet) throws IOException {
-    String sampleDocs = null;
-    String baseUrl = getBaseUrl(".system");
-    String url = baseUrl + "/.system/blob/" + configSet + "_sample_raw?wt=filestream";
-    HttpGet httpGet = null;
-    try {
-      httpGet = new HttpGet(url);
-      HttpResponse entity = cloudClient().getHttpClient().execute(httpGet);
-      int statusCode = entity.getStatusLine().getStatusCode();
-      if (statusCode == HttpStatus.SC_OK) {
-        byte[] bytes = streamAsBytes(entity.getEntity().getContent());
-        if (bytes.length > 0) {
-          sampleDocs = new String(bytes, StandardCharsets.UTF_8);
-        }
-      } else if (statusCode != HttpStatus.SC_NOT_FOUND) {
-        byte[] bytes = streamAsBytes(entity.getEntity().getContent());
-        throw new IOException("Failed to lookup raw docs for " + configSet + " due to: " + new String(bytes, StandardCharsets.UTF_8));
-      } // else not found is ok
-    } finally {
-      if (httpGet != null) {
-        httpGet.releaseConnection();
-      }
-    }
-    return sampleDocs;
-  }
-
   private byte[] streamAsBytes(final InputStream in) throws IOException {
     return DefaultSampleDocumentsLoader.streamAsBytes(in);
   }
 
-  protected String storeSampleDocs(final String configSet, List<SolrInputDocument> docs, String sampleDocumentsText) throws IOException, SolrServerException {
+  protected void storeSampleDocs(final String configSet, List<SolrInputDocument> docs) throws IOException {
     postDataToBlobStore(cloudClient(), configSet + "_sample", streamAsBytes(toJavabin(docs)));
-
-    // store raw text for UI too
-    if (sampleDocumentsText != null) {
-      postDataToBlobStore(cloudClient(), configSet + "_sample_raw", sampleDocumentsText.getBytes(StandardCharsets.UTF_8));
-    } else {
-      // delete the raw sample doc blob
-      CloudSolrClient cloudSolrClient = cloudClient();
-      cloudSolrClient.deleteByQuery(".system", "id:" + configSet + "_sample_raw/*", 1);
-      cloudSolrClient.commit(".system", true, true);
-    }
-    return sampleDocumentsText;
   }
 
   @SuppressWarnings({"rawtypes"})
@@ -1556,7 +1512,7 @@ public class SchemaDesignerAPI {
     double tookMs = timer.getTime();
     log.debug("Indexed {} docs into collection {}, took {} ms", numFound, collectionName, tookMs);
 
-    return errorsDuringIndexing;
+    return !errorsDuringIndexing.isEmpty() ? errorsDuringIndexing : null;
   }
 
   protected Map<String, Object> buildResponse(String configSet,
@@ -2119,12 +2075,12 @@ public class SchemaDesignerAPI {
 
     return changed;
   }
-  
+
   protected int requireSchemaVersionFromClient(SolrQueryRequest req, String action) {
     final int schemaVersion = req.getParams().getInt(SCHEMA_VERSION_PARAM, -1);
     if (schemaVersion == -1) {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-          SCHEMA_VERSION_PARAM + " is a required parameter for the "+action+" action");
+          SCHEMA_VERSION_PARAM + " is a required parameter for the " + action + " action");
     }
     return schemaVersion;
   }
@@ -2188,7 +2144,6 @@ public class SchemaDesignerAPI {
     CollectionAdminRequest.deleteCollection(mutableId).process(cloudSolrClient);
     // delete the sample doc blob
     cloudSolrClient.deleteByQuery(".system", "id:" + configSet + "_sample/*", 10);
-    cloudSolrClient.deleteByQuery(".system", "id:" + configSet + "_sample_raw/*", 10);
     cloudSolrClient.commit(".system", true, true);
     zkStateReader().getConfigManager().deleteConfigDir(mutableId);
   }

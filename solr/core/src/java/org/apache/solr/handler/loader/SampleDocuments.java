@@ -17,13 +17,10 @@
 
 package org.apache.solr.handler.loader;
 
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.apache.solr.common.SolrInputDocument;
@@ -31,18 +28,15 @@ import org.apache.solr.common.SolrInputDocument;
 import static org.apache.solr.common.params.CommonParams.JSON_MIME;
 
 public class SampleDocuments {
-  public static final SampleDocuments NONE = new SampleDocuments(null, null, null, null);
-
-  public List<SolrInputDocument> parsed;
+  public static final SampleDocuments NONE = new SampleDocuments(null, null, null);
   public final String contentType;
-  public final byte[] uploadedBytes;
   public final String fileSource;
+  public List<SolrInputDocument> parsed;
 
-  public SampleDocuments(List<SolrInputDocument> parsed, String contentType, String fileSource, byte[] uploadedBytes) {
+  public SampleDocuments(List<SolrInputDocument> parsed, String contentType, String fileSource) {
     this.parsed = parsed != null ? parsed : new LinkedList<>(); // needs to be mutable
     this.contentType = contentType;
     this.fileSource = fileSource;
-    this.uploadedBytes = uploadedBytes;
   }
 
   public String getSource() {
@@ -56,25 +50,13 @@ public class SampleDocuments {
     return contentType.contains(JSON_MIME) || contentType.startsWith("text/") || contentType.contains("application/xml");
   }
 
-  public String getSampleText() {
-    String text = null;
-    if (uploadedBytes != null && isTextContentType()) {
-      text = new String(uploadedBytes, StandardCharsets.UTF_8);
-      // 20K limit on the sample text document view
-      if (text.length() > (20 * 1024)) {
-        text = null; // too big, don't show sample in textarea on UI
-      }
-    }
-    return text;
-  }
-
   public List<SolrInputDocument> appendDocs(String idFieldName, List<SolrInputDocument> add, int maxDocsToLoad) {
     if (add != null && !add.isEmpty()) {
       final Set<Object> ids =
           parsed.stream().map(doc -> doc.getFieldValue(idFieldName)).filter(Objects::nonNull).collect(Collectors.toSet());
       final List<SolrInputDocument> toAdd = add.stream().filter(doc -> {
-         Object id = doc.getFieldValue(idFieldName);
-         return id != null && !ids.contains(id); // doc has ID and it's not already in the set
+        Object id = doc.getFieldValue(idFieldName);
+        return id != null && !ids.contains(id); // doc has ID and it's not already in the set
       }).collect(Collectors.toList());
       parsed.addAll(toAdd);
       if (maxDocsToLoad > 0 && parsed.size() > maxDocsToLoad) {

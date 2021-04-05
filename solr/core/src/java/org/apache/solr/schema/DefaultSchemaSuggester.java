@@ -84,7 +84,7 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
     }
 
     // TODO: use passed in langs
-    Locale locale = Locale.ENGLISH;
+    Locale locale = Locale.ROOT;
 
     boolean isMV = isMultiValued(sampleValues);
     String fieldTypeName = guessFieldType(fieldName, sampleValues, schema, isMV, locale);
@@ -206,13 +206,17 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
     NumberFormat format = NumberFormat.getInstance(locale);
     format.setParseIntegerOnly(false);
     format.setRoundingMode(RoundingMode.CEILING);
-    boolean isFloat = true;
+    //boolean isFloat = true;
     for (Object next : values) {
       Object parsed = ParseDoubleFieldUpdateProcessorFactory.parsePossibleDouble(next, format);
       if (parsed == null) {
         // not a double ...
         return null;
       }
+
+      /*
+      Tried to be clever and pick pfloat if double precision is not needed, but the ParseDoubleFieldUpdateProcessorFactory
+      doesn't work with pfloat, so you don't get any locale sensitive parsing in the URP chain, so pdouble it is ...
 
       Number num = (Number) parsed;
       String str = num.toString();
@@ -223,9 +227,10 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
           isFloat = false;
         }
       }
+       */
     }
 
-    return isFloat ? "pfloat" : "pdouble";
+    return "pdouble";
   }
 
   protected boolean isBoolean(List<Object> values) {

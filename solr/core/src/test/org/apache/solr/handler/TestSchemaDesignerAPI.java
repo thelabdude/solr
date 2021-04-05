@@ -30,12 +30,14 @@ import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.common.SolrDocumentList;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.ZkConfigManager;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
+import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -53,6 +55,7 @@ import static org.apache.solr.common.util.Utils.makeMap;
 import static org.apache.solr.handler.SchemaDesignerAPI.CLEANUP_TEMP_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.CONFIG_SET_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.COPY_FROM_PARAM;
+import static org.apache.solr.handler.SchemaDesignerAPI.DISABLE_DESIGNER_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.DOC_ID_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_DYNAMIC_FIELDS_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_FIELD_GUESSING_PARAM;
@@ -99,12 +102,51 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     schemaDesignerAPI = new SchemaDesignerAPI(cc);
   }
 
+  public void testTSV() throws Exception {
+    String configSet = "testTSV";
+
+    ModifiableSolrParams reqParams = new ModifiableSolrParams();
+
+    // GET /schema-designer/info
+    SolrQueryResponse rsp = new SolrQueryResponse();
+    SolrQueryRequest req = mock(SolrQueryRequest.class);
+
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    reqParams.set(LANGUAGES_PARAM, "en");
+    reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, false);
+    when(req.getParams()).thenReturn(reqParams);
+
+    String tsv = "id\tcol1\tcol2\n1\tfoo\tbar\n2\tbaz\tbah\n";
+
+    // POST some sample TSV docs
+    ContentStream stream = new ContentStreamBase.StringStream(tsv, "text/csv");
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+
+    rsp = new SolrQueryResponse();
+
+    // POST /schema-designer/analyze
+    schemaDesignerAPI.analyze(req, rsp);
+    assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
+    assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
+    assertEquals(2, rsp.getValues().get("numDocs"));
+
+    reqParams.clear();
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.cleanupTemp(req, rsp);
+
+    String mutableId = schemaDesignerAPI.getMutableId(configSet);
+    assertFalse(cc.getZkController().getClusterState().hasCollection(mutableId));
+    SolrZkClient zkClient = cc.getZkController().getZkClient();
+    assertFalse(zkClient.exists(ZkConfigManager.CONFIGS_ZKNODE + "/" + mutableId, true));
+  }
+
   @Test
   @SuppressWarnings("unchecked")
   public void testAddTechproductsProgressively() throws Exception {
     File docsDir = new File(ExternalPaths.SOURCE_HOME, "example/exampledocs");
     assertTrue(docsDir.getAbsolutePath() + " not found!", docsDir.isDirectory());
-    File[] toAdd = docsDir.listFiles((dir, name) -> name.endsWith(".xml") || name.endsWith(".json") || name.endsWith(".csv"));
+    File[] toAdd = docsDir.listFiles((dir, name) -> name.endsWith(".xml") || name.endsWith(".json") || name.endsWith(".csv") || name.endsWith(".jsonl"));
     assertNotNull("No test data files found in " + docsDir.getAbsolutePath(), toAdd);
 
     String configSet = "techproducts";
@@ -201,7 +243,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     schemaDesignerAPI.query(req, rsp);
     assertNotNull(rsp.getResponseHeader());
     SolrDocumentList results = (SolrDocumentList) rsp.getResponse();
-    assertEquals(46, results.getNumFound());
+    assertEquals(48, results.getNumFound());
 
     // publish schema to a config set that can be used by real collections
     reqParams.clear();
@@ -213,6 +255,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     reqParams.set(INDEX_TO_COLLECTION_PARAM, true);
     reqParams.set(RELOAD_COLLECTIONS_PARAM, true);
     reqParams.set(CLEANUP_TEMP_PARAM, true);
+    reqParams.set(DISABLE_DESIGNER_PARAM, true);
 
     rsp = new SolrQueryResponse();
     schemaDesignerAPI.publish(req, rsp);
@@ -226,6 +269,19 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     List<String> collections = (List<String>) rsp.getValues().get("collections");
     assertNotNull(collections);
     assertTrue(collections.contains(collection));
+
+    // now try to create another temp, which should fail since designer is disabled for this configSet now
+    reqParams.clear();
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    rsp = new SolrQueryResponse();
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    try {
+      schemaDesignerAPI.prepNewSchema(req, rsp);
+      fail("Prep should fail for locked schema " + configSet);
+    } catch (SolrException solrExc) {
+      assertEquals(SolrException.ErrorCode.BAD_REQUEST.code, solrExc.code());
+    }
   }
 
   @Test

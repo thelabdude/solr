@@ -425,8 +425,8 @@ limitations under the License.
               <a ng-click="showHelp('fieldGuessingHelp')"><img class="help-ico" src="img/ico/question-white.png"/></a>
               <div id="fieldGuessingHelp" class="help" ng-show="helpId === 'fieldGuessingHelp'">
                 <div class="help-wide">
-                  <p>Field guessing (aka "schemaless mode") allows Solr to detect the "best" field type for unknown fields encountered during indexing. If you use the schema designer to create your schema based on sample documents, you may not need to enable this feature.
-                    However, with this feature disabled, undefined fields encountered during indexing will lead to indexing errors.<br/><br/>For more information about schemaless mode, see:
+                  <p>Field guessing (aka "schemaless mode") allows Solr to detect the "best" field type for unknown fields encountered during indexing. Field guessing also performs some field transformations, such as removing spaces from field names. If you use the schema designer to create your schema based on sample documents, you may not need to enable this feature.
+                    However, with this feature disabled, you need to make sure the incoming data matches the schema exactly or indexing errors may occur.<br/><br/>For more information about schemaless mode, see:
                   <div class="help-anchor"><a target="_blank" href="https://solr.apache.org/guide/schemaless-mode.html">Schemaless Mode</a></div>
                   </p>
                 </div>

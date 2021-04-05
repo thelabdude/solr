@@ -18,17 +18,28 @@
 solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, $cookies, $window, Constants, SchemaDesigner, Luke) {
   $scope.resetMenu("schema-designer", Constants.IS_ROOT_PAGE);
 
-  $scope.onError = function (errorMsg, errorCode) {
+  $scope.onError = function (errorMsg, errorCode, errorDetails) {
     $scope.updateWorking = false;
     delete $scope.updateStatusMessage;
-    var detailsAt = errorMsg.indexOf(" Details: ");
-    if (detailsAt !== -1) {
-      $scope.designerAPIError = errorMsg.substring(0, detailsAt);
-      $scope.designerAPIErrorDetails = errorMsg.substring(detailsAt + 10);
+    $scope.designerAPIError = errorMsg;
+    if (errorDetails) {
+      var errorDetailsStr = "";
+      for (var id in errorDetails) {
+        var msg = errorDetails[id];
+        var at = msg.indexOf("ERROR: ");
+        if (at !== -1) {
+          msg = msg.substring(at+7);
+        }
+        if (!msg.includes(id)) {
+          msg = id+": "+msg;
+        }
+        errorDetailsStr += msg+"\n\n";
+      }
+      $scope.designerAPIErrorDetails = errorDetailsStr;
     } else {
-      $scope.designerAPIError = errorMsg;
       delete $scope.designerAPIErrorDetails;
     }
+
     if (errorCode === 409) {
       $scope.schemaVersion = -1; // reset to get the latest
       $scope.isVersionMismatch = true;
@@ -42,7 +53,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
   $scope.errorHandler = function (e) {
     var error = e.data ? e.data.error : null;
     if (error) {
-      $scope.onError(error.msg, error.code);
+      $scope.onError(error.msg, error.code, e.data.errorDetails);
     }
   };
 
@@ -353,7 +364,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         $scope.onSelectSchemaTreeNode(nodeId);
         $scope.updateWorking = false;
         if (data.updateError != null) {
-          $scope.onError(data.updateError, data.updateErrorCode);
+          $scope.onError(data.updateError, data.updateErrorCode, data.errorDetails);
         } else {
           if ($scope.selectedUpdated) {
             $scope.selectedUpdated = false;

@@ -192,7 +192,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
   };
 
   $scope.addSchema = function () {
-    $scope.resetSchema();
     $scope.firstSchemaMessage = false;
 
     if (!$scope.newSchema) {
@@ -345,6 +344,12 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.fieldTypes = fieldTypes;
     $scope.core = data.core;
     $scope.schemaTree = tree;
+
+    var jst = $('#schemaJsTree').jstree(true);
+    if (jst) {
+      jst.refresh();
+    }
+
     $scope.collectionsForConfig = data.collectionsForConfig;
 
     if (data.docIds) {
@@ -1130,11 +1135,11 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       schemaVersion: $scope.schemaVersion
     }, putData, function (data) {
 
+      var nodeType = data.updateType;
       $scope.schemaVersion = data.schemaVersion;
       $scope.currentSchema = data.configSet;
       $scope.core = data.core;
 
-      var nodeType = data.updateType;
       $scope.selectedNode = data[nodeType];
       $scope.selectedNode.href = href;
       $scope.selectedNode.id = id;

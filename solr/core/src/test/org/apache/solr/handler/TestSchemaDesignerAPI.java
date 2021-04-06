@@ -43,6 +43,8 @@ import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
+import org.apache.solr.schema.ManagedIndexSchema;
+import org.apache.solr.schema.SchemaField;
 import org.apache.solr.util.ExternalPaths;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -676,6 +678,88 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     QueryResponse qr = cluster.getSolrClient().query(collection, query);
     // this proves the docs were stored in the blob store too
     assertEquals(4, qr.getResults().getNumFound());
+  }
+
+  @SuppressWarnings("unchecked")
+  public void testFieldUpdates() throws Exception {
+    String configSet = "fieldUpdates";
+
+    ModifiableSolrParams reqParams = new ModifiableSolrParams();
+
+    // Use the prep endpoint to prepare the new schema
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    SolrQueryResponse rsp = new SolrQueryResponse();
+    SolrQueryRequest req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    schemaDesignerAPI.prepNewSchema(req, rsp);
+    assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
+    assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
+    SolrParams rspData = rsp.getValues().toSolrParams();
+    int schemaVersion = rspData.getInt(SCHEMA_VERSION_PARAM);
+
+    // add our test field that we'll test various updates to
+    reqParams.clear();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(schemaVersion));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    ContentStreamBase.FileStream stream = new ContentStreamBase.FileStream(getFile("schema-designer/add-new-field.json"));
+    stream.setContentType(JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+    rsp = new SolrQueryResponse();
+
+    // POST /schema-designer/add
+    schemaDesignerAPI.addSchemaObject(req, rsp);
+    assertNotNull(rsp.getValues().get("add-field"));
+
+    final String fieldName = "keywords";
+
+    Optional<SimpleOrderedMap<Object>> maybeField =
+        ((List<SimpleOrderedMap<Object>>) rsp.getValues().get("fields")).stream().filter(m -> fieldName.equals(m.get("name"))).findFirst();
+    assertTrue(maybeField.isPresent());
+    SimpleOrderedMap<Object> field = maybeField.get();
+    assertEquals(Boolean.FALSE, field.get("indexed"));
+    assertEquals(Boolean.FALSE, field.get("required"));
+    assertEquals(Boolean.TRUE, field.get("stored"));
+    assertEquals(Boolean.TRUE, field.get("docValues"));
+    assertEquals(Boolean.TRUE, field.get("useDocValuesAsStored"));
+    assertEquals(Boolean.FALSE, field.get("multiValued"));
+    assertEquals("string", field.get("type"));
+
+    // make it required
+    Map<String, Object> updateField = makeMap("name", fieldName, "type", field.get("type"), "required", true);
+    schemaDesignerAPI.updateField(configSet, updateField);
+
+    String mutableId = schemaDesignerAPI.getMutableId(configSet);
+    ManagedIndexSchema schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    SchemaField schemaField = schema.getField(fieldName);
+    assertTrue(schemaField.isRequired());
+
+    updateField = makeMap("name", fieldName, "type", field.get("type"), "required", false, "stored", false);
+    schemaDesignerAPI.updateField(configSet, updateField);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schemaField = schema.getField(fieldName);
+    assertFalse(schemaField.isRequired());
+    assertFalse(schemaField.stored());
+
+    updateField = makeMap("name", fieldName, "type", field.get("type"), "required", false, "stored", false, "multiValued", true);
+    schemaDesignerAPI.updateField(configSet, updateField);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schemaField = schema.getField(fieldName);
+    assertFalse(schemaField.isRequired());
+    assertFalse(schemaField.stored());
+    assertTrue(schemaField.multiValued());
+
+    updateField = makeMap("name", fieldName, "type", "strings", "copyDest", "_text_");
+    schemaDesignerAPI.updateField(configSet, updateField);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schemaField = schema.getField(fieldName);
+    assertTrue(schemaField.multiValued());
+    assertEquals("strings", schemaField.getType().getTypeName());
+    assertFalse(schemaField.isRequired());
+    assertTrue(schemaField.stored());
+    List<String> srcFields = schema.getCopySources("_text_");
+    assertEquals(Collections.singletonList(fieldName), srcFields);
   }
 
   @SuppressWarnings("rawtypes")

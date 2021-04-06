@@ -27,7 +27,12 @@ import org.apache.solr.util.plugin.NamedListInitializedPlugin;
 
 public interface SchemaSuggester extends NamedListInitializedPlugin {
   Optional<SchemaField> suggestField(String fieldName, List<Object> sampleValues, IndexSchema schema, List<String> langs);
+
   ManagedIndexSchema adaptExistingFieldToData(SchemaField schemaField, List<Object> sampleValues, ManagedIndexSchema schema);
+
   Map<String, List<Object>> transposeDocs(List<SolrInputDocument> docs);
+
   void validateTypeChange(SchemaField field, FieldType toType, List<SolrInputDocument> docs) throws IOException;
+
+  boolean isMultiValued(String name, List<SolrInputDocument> docs);
 }

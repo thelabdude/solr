@@ -652,97 +652,31 @@ public class SchemaDesignerAPI {
           "Invalid update request! JSON payload is missing the required name property: " + json);
     }
 
-    String type = (String) updateField.get("type");
-    String copyDest = (String) updateField.get("copyDest");
-    Map<String, Object> fieldAttributes = updateField.entrySet().stream()
-        .filter(e -> !removeFieldProps.contains(e.getKey()))
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
+    SolrException solrExc = null;
     boolean needsRebuild = false;
     String updateType = "field";
-    if (type != null) {
-      // this is a field
-      SchemaField schemaField = schemaBeforeUpdate.getField(name);
-      String currentType = schemaField.getType().getTypeName();
-
-      SimpleOrderedMap<Object> fromTypeProps;
-      if (type.equals(currentType)) {
-        // no type change, so just pull the current type's props (with defaults) as we'll use these
-        // to determine which props get explicitly overridden on the field
-        fromTypeProps = schemaBeforeUpdate.getFieldTypeByName(currentType).getNamedPropertyValues(true);
-      } else {
-        // validate type change
-        FieldType newType = schemaBeforeUpdate.getFieldTypeByName(type);
-        if (newType == null) {
-          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-              "Invalid update request for field " + name + "! Field type " + type + " doesn't exist!");
+    String updateError = null;
+    if (updateField.get("type") != null) {
+      try {
+        needsRebuild = updateField(configSet, updateField);
+      } catch (SolrException exc) {
+        if (exc.code() != 400) {
+          throw exc;
         }
-        validateTypeChange(configSet, schemaField, newType);
-
-        // type change looks valid
-        fromTypeProps = newType.getNamedPropertyValues(true);
+        solrExc = exc;
+        updateError = solrExc.getMessage() + " Previous settings will be restored.";
       }
-
-      // the diff holds all the explicit properties not inherited from the type
-      Map<String, Object> diff = new HashMap<>();
-      for (Map.Entry<String, Object> e : fieldAttributes.entrySet()) {
-        String attr = e.getKey();
-        Object attrValue = e.getValue();
-        if ("name".equals(attr) || "type".equals(attr)) {
-          continue; // we don't want these in the diff map
-        }
-
-        if ("required".equals(attr)) {
-          diff.put(attr, attrValue != null ? attrValue : false);
-        } else {
-          Object fromType = fromTypeProps.get(attr);
-          if (fromType == null || !fromType.equals(attrValue)) {
-            diff.put(attr, attrValue);
-          }
-        }
-      }
-
-      // detect if they're trying to copy multi-valued fields into a single-valued field
-      Object multiValued = diff.get("multiValued");
-      if (multiValued == null) {
-        // mv not overridden explicitly, but we need the actual value, which will come from the new type (if that changed) or the current field
-        multiValued = type.equals(currentType) ? schemaField.multiValued() : schemaBeforeUpdate.getFieldTypeByName(type).isMultiValued();
-      }
-
-      if (Boolean.FALSE.equals(multiValued)) {
-        // make sure there are no mv source fields if this is a copy dest
-        for (String src : schemaBeforeUpdate.getCopySources(name)) {
-          SchemaField srcField = schemaBeforeUpdate.getField(src);
-          if (srcField.multiValued()) {
-            log.warn("Cannot change multi-valued field {} to single-valued because it is a copy field destination for multi-valued field {}", name, src);
-            multiValued = Boolean.TRUE;
-            diff.put("multiValued", multiValued);
-            break;
-          }
-        }
-      }
-
-      // switch from single-valued to multi-valued requires a full rebuild
-      // See SOLR-12185 ... if we're switching from single to multi-valued, then it's a big operation
-      if (hasMultivalueChange(multiValued, schemaField)) {
-        needsRebuild = true;
-        log.warn("Need to rebuild the temp collection for {} after field {} updated to multi-valued {}", configSet, name, multiValued);
-      }
-
-      log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
-      ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
-
-      // persist the change before applying the copy-field updates
-      if (!updatedSchema.persistManagedSchema(false)) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
-      }
-      needsRebuild = applyCopyFieldUpdates(mutableId, copyDest, name, updatedSchema) || needsRebuild;
     } else {
       updateType = "type";
+
+      Map<String, Object> typeAttrs = updateField.entrySet().stream()
+          .filter(e -> !removeFieldProps.contains(e.getKey()))
+          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
       FieldType fieldType = schemaBeforeUpdate.getFieldTypeByName(name);
 
       // this is a field type
-      Object multiValued = fieldAttributes.get("multiValued");
+      Object multiValued = typeAttrs.get("multiValued");
       if (multiValued == null || (Boolean.TRUE.equals(multiValued) && !fieldType.isMultiValued()) || (Boolean.FALSE.equals(multiValued) && fieldType.isMultiValued())) {
         needsRebuild = true;
         log.warn("Re-building the temp collection for {} after type {} updated to multi-valued {}", configSet, name, multiValued);
@@ -750,14 +684,14 @@ public class SchemaDesignerAPI {
 
       // nice, the json for this field looks like
       // "synonymQueryStyle": "org.apache.solr.parser.SolrQueryParserBase$SynonymQueryStyle:AS_SAME_TERM"
-      if (fieldAttributes.get("synonymQueryStyle") instanceof String) {
-        String synonymQueryStyle = (String) fieldAttributes.get("synonymQueryStyle");
+      if (typeAttrs.get("synonymQueryStyle") instanceof String) {
+        String synonymQueryStyle = (String) typeAttrs.get("synonymQueryStyle");
         if (synonymQueryStyle.lastIndexOf(':') != -1) {
-          fieldAttributes.put("synonymQueryStyle", synonymQueryStyle.substring(synonymQueryStyle.lastIndexOf(':') + 1));
+          typeAttrs.put("synonymQueryStyle", synonymQueryStyle.substring(synonymQueryStyle.lastIndexOf(':') + 1));
         }
       }
 
-      ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceFieldType(fieldType.getTypeName(), (String) fieldAttributes.get("class"), fieldAttributes);
+      ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceFieldType(fieldType.getTypeName(), (String) typeAttrs.get("class"), typeAttrs);
       if (!updatedSchema.persistManagedSchema(false)) {
         throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
       }
@@ -766,16 +700,16 @@ public class SchemaDesignerAPI {
     // the update may have required a full rebuild of the index, otherwise, it's just a reload / re-index sample
     reloadTempCollection(configSet, needsRebuild);
 
-    // re-index the docs
+    // re-index the docs if no error to this point
     final ManagedIndexSchema schema = loadLatestSchema(mutableId, settings);
-    SolrException solrExc = null;
-    Map<Object, Throwable> errorsDuringIndexing = null;
     List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
-    if (!docs.isEmpty()) {
+    Map<Object, Throwable> errorsDuringIndexing = null;
+    if (solrExc == null && !docs.isEmpty()) {
       try {
         errorsDuringIndexing = indexSampleDocs(schema.getUniqueKeyField().getName(), docs, mutableId, false);
       } catch (SolrException exc) {
         solrExc = exc;
+        updateError = "Failed to re-index sample documents after update to the " + name + " " + updateType + " due to: " + solrExc.getMessage();
       }
     }
 
@@ -790,16 +724,122 @@ public class SchemaDesignerAPI {
 
     if (solrExc != null) {
       response.put("updateErrorCode", solrExc.code());
-      String updateError = "Failed to re-index sample documents after update to the " + name + " " + updateType + " due to: " + solrExc.getMessage();
-      response.put("updateError", updateError);
+      response.put("updateError", updateError != null ? updateError : solrExc.getMessage());
     } else if (errorsDuringIndexing != null) {
       response.put("errorDetails", errorsDuringIndexing);
       response.put("updateErrorCode", 400);
-      String updateError = "Failed to re-index sample documents after update to the " + name + " " + updateType;
-      response.put("updateError", updateError);
+      response.put("updateError", "Failed to re-index sample documents after update to the " + name + " " + updateType);
     }
 
     rsp.getValues().addAll(response);
+  }
+
+  public boolean updateField(String configSet, Map<String, Object> updateField) throws InterruptedException, IOException, KeeperException, SolrServerException {
+    String mutableId = getMutableId(configSet);
+
+    String name = (String) updateField.get("name");
+    String type = (String) updateField.get("type");
+    String copyDest = (String) updateField.get("copyDest");
+    Map<String, Object> fieldAttributes = updateField.entrySet().stream()
+        .filter(e -> !removeFieldProps.contains(e.getKey()))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    boolean needsRebuild = false;
+
+    Map<String, Object> settings = new HashMap<>();
+    ManagedIndexSchema schemaBeforeUpdate = getMutableSchemaForConfigSet(configSet, -1, null, settings);
+
+    SchemaField schemaField = schemaBeforeUpdate.getField(name);
+    String currentType = schemaField.getType().getTypeName();
+
+    SimpleOrderedMap<Object> fromTypeProps;
+    if (type.equals(currentType)) {
+      // no type change, so just pull the current type's props (with defaults) as we'll use these
+      // to determine which props get explicitly overridden on the field
+      fromTypeProps = schemaBeforeUpdate.getFieldTypeByName(currentType).getNamedPropertyValues(true);
+    } else {
+      // validate type change
+      FieldType newType = schemaBeforeUpdate.getFieldTypeByName(type);
+      if (newType == null) {
+        throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+            "Invalid update request for field " + name + "! Field type " + type + " doesn't exist!");
+      }
+      validateTypeChange(configSet, schemaField, newType);
+
+      // type change looks valid
+      fromTypeProps = newType.getNamedPropertyValues(true);
+    }
+
+    // the diff holds all the explicit properties not inherited from the type
+    Map<String, Object> diff = new HashMap<>();
+    for (Map.Entry<String, Object> e : fieldAttributes.entrySet()) {
+      String attr = e.getKey();
+      Object attrValue = e.getValue();
+      if ("name".equals(attr) || "type".equals(attr)) {
+        continue; // we don't want these in the diff map
+      }
+
+      if ("required".equals(attr)) {
+        diff.put(attr, attrValue != null ? attrValue : false);
+      } else {
+        Object fromType = fromTypeProps.get(attr);
+        if (fromType == null || !fromType.equals(attrValue)) {
+          diff.put(attr, attrValue);
+        }
+      }
+    }
+
+    // detect if they're trying to copy multi-valued fields into a single-valued field
+    Object multiValued = diff.get("multiValued");
+    if (multiValued == null) {
+      // mv not overridden explicitly, but we need the actual value, which will come from the new type (if that changed) or the current field
+      multiValued = type.equals(currentType) ? schemaField.multiValued() : schemaBeforeUpdate.getFieldTypeByName(type).isMultiValued();
+    }
+
+    if (Boolean.FALSE.equals(multiValued)) {
+      // make sure there are no mv source fields if this is a copy dest
+      for (String src : schemaBeforeUpdate.getCopySources(name)) {
+        SchemaField srcField = schemaBeforeUpdate.getField(src);
+        if (srcField.multiValued()) {
+          log.warn("Cannot change multi-valued field {} to single-valued because it is a copy field destination for multi-valued field {}", name, src);
+          multiValued = Boolean.TRUE;
+          diff.put("multiValued", multiValued);
+          break;
+        }
+      }
+    }
+
+    if (Boolean.FALSE.equals(multiValued) && schemaField.multiValued()) {
+      // changing from multi- to single value ... verify the data agrees ...
+      validateMultiValuedChange(configSet, schemaField, Boolean.FALSE);
+    }
+
+    // switch from single-valued to multi-valued requires a full rebuild
+    // See SOLR-12185 ... if we're switching from single to multi-valued, then it's a big operation
+    if (hasMultivalueChange(multiValued, schemaField)) {
+      needsRebuild = true;
+      log.warn("Need to rebuild the temp collection for {} after field {} updated to multi-valued {}", configSet, name, multiValued);
+    }
+
+    log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
+    ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
+
+    // persist the change before applying the copy-field updates
+    if (!updatedSchema.persistManagedSchema(false)) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
+    }
+
+    return applyCopyFieldUpdates(mutableId, copyDest, name, updatedSchema) || needsRebuild;
+  }
+
+  protected void validateMultiValuedChange(String configSet, SchemaField field, Boolean multiValued) throws IOException {
+    List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
+    if (!docs.isEmpty()) {
+      boolean isMV = schemaSuggester.isMultiValued(field.getName(), docs);
+      if (isMV && !multiValued) {
+        throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Cannot change field " + field.getName() + " to single-valued as some sample docs have multiple values!");
+      }
+    }
   }
 
   protected void validateTypeChange(String configSet, SchemaField field, FieldType toType) throws IOException {
@@ -1392,7 +1432,7 @@ public class SchemaDesignerAPI {
     return SolrConfig.readFromResourceLoader(zkLoader, SOLR_CONFIG_XML, true, null);
   }
 
-  protected ManagedIndexSchema loadLatestSchema(String configSet, Map<String, Object> settings) {
+  ManagedIndexSchema loadLatestSchema(String configSet, Map<String, Object> settings) {
     SolrConfig solrConfig = loadLatestConfig(configSet);
     if (settings != null) {
       settings.putAll(getDesignerSettings(solrConfig));

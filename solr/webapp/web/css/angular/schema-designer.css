@@ -37,7 +37,7 @@ limitations under the License.
   overflow: auto;
   float: left;
   height: 520px;
-  width: 240px;
+  width: 250px;
   padding: 3px;
 }
 #content #designer #tree-node-content
@@ -1376,11 +1376,11 @@ limitations under the License.
 }
 
 #content #designer #tree-filters-cat {
-  max-width: 55px;
+  max-width: 66px;
   font-size: 11px;
 }
 
 #content #designer #tree-filters-options {
-  max-width: 75px;
+  max-width: 81px;
   font-size: 11px;
 }

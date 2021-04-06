@@ -1375,6 +1375,12 @@ limitations under the License.
   text-decoration-color: #003eff;
 }
 
-#content #designer #tree-filters-type {
-  width: 90px;
+#content #designer #tree-filters-cat {
+  max-width: 55px;
+  font-size: 11px;
+}
+
+#content #designer #tree-filters-options {
+  max-width: 75px;
+  font-size: 11px;
 }

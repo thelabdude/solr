@@ -17,6 +17,7 @@
 
 package org.apache.solr.schema;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,4 +29,5 @@ public interface SchemaSuggester extends NamedListInitializedPlugin {
   Optional<SchemaField> suggestField(String fieldName, List<Object> sampleValues, IndexSchema schema, List<String> langs);
   ManagedIndexSchema adaptExistingFieldToData(SchemaField schemaField, List<Object> sampleValues, ManagedIndexSchema schema);
   Map<String, List<Object>> transposeDocs(List<SolrInputDocument> docs);
+  void validateTypeChange(SchemaField field, FieldType toType, List<SolrInputDocument> docs) throws IOException;
 }

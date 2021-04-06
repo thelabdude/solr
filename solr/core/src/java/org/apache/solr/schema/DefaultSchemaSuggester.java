@@ -17,6 +17,7 @@
 
 package org.apache.solr.schema;
 
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
@@ -69,11 +70,53 @@ public class DefaultSchemaSuggester implements SchemaSuggester {
   private static final String TRUE_VALUES_PARAM = "trueValue";
   private static final String FALSE_VALUES_PARAM = "falseValue";
   private static final String CASE_SENSITIVE_PARAM = "caseSensitive";
+
+  private static final String TYPE_CHANGE_ERROR = "Failed to parse all sample values as %s for changing type for field %s to %s";
+
   // boolean parsing
   private final Set<String> trueValues = new HashSet<>(Arrays.asList("true"));
   private final Set<String> falseValues = new HashSet<>(Arrays.asList("false"));
   private final List<DateTimeFormatter> dateTimeFormatters = new LinkedList<>();
   private boolean caseSensitive = false;
+
+  @Override
+  public void validateTypeChange(SchemaField field, FieldType toType, List<SolrInputDocument> docs) throws IOException {
+    final NumberType toNumType = toType.getNumberType();
+    if (toNumType != null) {
+      validateNumericTypeChange(field, toType, docs, toNumType);
+    }
+  }
+
+  protected void validateNumericTypeChange(SchemaField field, FieldType toType, List<SolrInputDocument> docs, final NumberType toNumType) {
+    // desired type is numeric, make sure all the sample values are numbers
+    List<Object> fieldValues = docs.stream()
+        .map(d -> d.getFieldValue(field.getName()))
+        .filter(Objects::nonNull)
+        .flatMap(c -> (c instanceof Collection) ? ((Collection<?>) c).stream() : Stream.of(c))
+        .collect(Collectors.toList());
+    switch (toNumType) {
+      case DOUBLE:
+      case FLOAT:
+        if (isFloatOrDouble(fieldValues, Locale.ROOT) == null) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+              String.format(Locale.ROOT, TYPE_CHANGE_ERROR, toNumType.name(), field.getName(), toType.getTypeName()));
+        }
+        break;
+      case LONG:
+      case INTEGER:
+        if (isIntOrLong(fieldValues, Locale.ROOT) == null) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+              String.format(Locale.ROOT, TYPE_CHANGE_ERROR, toNumType.name(), field.getName(), toType.getTypeName()));
+        }
+        break;
+      case DATE:
+        if (!isDateTime(fieldValues)) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+              String.format(Locale.ROOT, TYPE_CHANGE_ERROR, toNumType.name(), field.getName(), toType.getTypeName()));
+        }
+        break;
+    }
+  }
 
   @Override
   public Optional<SchemaField> suggestField(String fieldName, List<Object> sampleValues, IndexSchema schema, List<String> langs) {

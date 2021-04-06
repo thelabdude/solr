@@ -665,13 +665,23 @@ public class SchemaDesignerAPI {
       SchemaField schemaField = schemaBeforeUpdate.getField(name);
       String currentType = schemaField.getType().getTypeName();
 
-      SimpleOrderedMap<Object> updatedTypeProps = null;
-      if (!type.equals(currentType)) {
-        // type change
-        updatedTypeProps = schemaBeforeUpdate.getFieldTypeByName(type).getNamedPropertyValues(true);
-      }
+      SimpleOrderedMap<Object> fromTypeProps;
+      if (type.equals(currentType)) {
+        // no type change, so just pull the current type's props (with defaults) as we'll use these
+        // to determine which props get explicitly overridden on the field
+        fromTypeProps = schemaBeforeUpdate.getFieldTypeByName(currentType).getNamedPropertyValues(true);
+      } else {
+        // validate type change
+        FieldType newType = schemaBeforeUpdate.getFieldTypeByName(type);
+        if (newType == null) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+              "Invalid update request for field " + name + "! Field type " + type + " doesn't exist!");
+        }
+        validateTypeChange(configSet, schemaField, newType);
 
-      SimpleOrderedMap<Object> current = schemaField.getNamedPropertyValues(true);
+        // type change looks valid
+        fromTypeProps = newType.getNamedPropertyValues(true);
+      }
 
       // the diff holds all the explicit properties not inherited from the type
       Map<String, Object> diff = new HashMap<>();
@@ -679,11 +689,14 @@ public class SchemaDesignerAPI {
         String attr = e.getKey();
         Object attrValue = e.getValue();
         if ("name".equals(attr) || "type".equals(attr)) {
-          diff.put(attr, attrValue);
+          continue; // we don't want these in the diff map
+        }
+
+        if ("required".equals(attr)) {
+          diff.put(attr, attrValue != null ? attrValue : false);
         } else {
-          // compare to the "current" value, but if the type changed, the "current" value comes from the new type
-          Object fromCurrent = updatedTypeProps != null ? updatedTypeProps.get(attr) : current.get(attr);
-          if (fromCurrent == null || !fromCurrent.equals(attrValue)) {
+          Object fromType = fromTypeProps.get(attr);
+          if (fromType == null || !fromType.equals(attrValue)) {
             diff.put(attr, attrValue);
           }
         }
@@ -693,8 +706,9 @@ public class SchemaDesignerAPI {
       Object multiValued = diff.get("multiValued");
       if (multiValued == null) {
         // mv not overridden explicitly, but we need the actual value, which will come from the new type (if that changed) or the current field
-        multiValued = updatedTypeProps != null ? updatedTypeProps.get("multiValued") : current.get("multiValued");
+        multiValued = type.equals(currentType) ? schemaField.multiValued() : schemaBeforeUpdate.getFieldTypeByName(type).isMultiValued();
       }
+
       if (Boolean.FALSE.equals(multiValued)) {
         // make sure there are no mv source fields if this is a copy dest
         for (String src : schemaBeforeUpdate.getCopySources(name)) {
@@ -716,15 +730,13 @@ public class SchemaDesignerAPI {
       }
 
       log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
-      SchemaRequest.ReplaceField replaceFieldRequest = new SchemaRequest.ReplaceField(diff);
-      SchemaResponse.UpdateResponse replaceFieldResponse = replaceFieldRequest.process(cloudClient(), mutableId);
-      if (replaceFieldResponse.getStatus() != 0) {
-        Exception exc = replaceFieldResponse.getException();
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, exc);
-      }
+      ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
 
-      ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, -1, null, settings);
-      needsRebuild = applyCopyFieldUpdates(mutableId, copyDest, name, schema) || needsRebuild;
+      // persist the change before applying the copy-field updates
+      if (!updatedSchema.persistManagedSchema(false)) {
+        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
+      }
+      needsRebuild = applyCopyFieldUpdates(mutableId, copyDest, name, updatedSchema) || needsRebuild;
     } else {
       updateType = "type";
       FieldType fieldType = schemaBeforeUpdate.getFieldTypeByName(name);
@@ -745,13 +757,9 @@ public class SchemaDesignerAPI {
         }
       }
 
-      FieldTypeDefinition ftDef = new FieldTypeDefinition();
-      ftDef.setAttributes(fieldAttributes);
-      SchemaRequest.ReplaceFieldType replaceType = new SchemaRequest.ReplaceFieldType(ftDef);
-      SchemaResponse.UpdateResponse replaceFieldResponse = replaceType.process(cloudClient(), mutableId);
-      if (replaceFieldResponse.getStatus() != 0) {
-        Exception exc = replaceFieldResponse.getException();
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, exc);
+      ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceFieldType(fieldType.getTypeName(), (String) fieldAttributes.get("class"), fieldAttributes);
+      if (!updatedSchema.persistManagedSchema(false)) {
+        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
       }
     }
 
@@ -759,7 +767,7 @@ public class SchemaDesignerAPI {
     reloadTempCollection(configSet, needsRebuild);
 
     // re-index the docs
-    ManagedIndexSchema schema = loadLatestSchema(mutableId, settings);
+    final ManagedIndexSchema schema = loadLatestSchema(mutableId, settings);
     SolrException solrExc = null;
     Map<Object, Throwable> errorsDuringIndexing = null;
     List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
@@ -773,8 +781,12 @@ public class SchemaDesignerAPI {
 
     Map<String, Object> response = buildResponse(configSet, schema, settings, docs);
 
-    response.put(updateType, updateField);
     response.put("updateType", updateType);
+    if ("field".equals(updateType)) {
+      response.put(updateType, fieldToMap(schema.getField(name), schema));
+    } else if ("type".equals(updateType)) {
+      response.put(updateType, schema.getFieldTypeByName(name).getNamedPropertyValues(true));
+    }
 
     if (solrExc != null) {
       response.put("updateErrorCode", solrExc.code());
@@ -788,6 +800,16 @@ public class SchemaDesignerAPI {
     }
 
     rsp.getValues().addAll(response);
+  }
+
+  protected void validateTypeChange(String configSet, SchemaField field, FieldType toType) throws IOException {
+    if ("_version_".equals(field.getName())) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Cannot change type of the _version_ field; it must be a plong.");
+    }
+    List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
+    if (!docs.isEmpty()) {
+      schemaSuggester.validateTypeChange(field, toType, docs);
+    }
   }
 
   @EndPoint(method = PUT,
@@ -1511,7 +1533,7 @@ public class SchemaDesignerAPI {
   }
 
   protected Map<String, Object> buildResponse(String configSet,
-                                              ManagedIndexSchema schema,
+                                              final ManagedIndexSchema schema,
                                               Map<String, Object> settings,
                                               List<SolrInputDocument> docs) throws Exception {
     String mutableId = getMutableId(configSet);
@@ -1537,16 +1559,7 @@ public class SchemaDesignerAPI {
     // Guess at a schema for each field found in the sample docs
     // Collect all fields across all docs with mapping to values
     response.put("fields", schema.getFields().values().stream()
-        .map(f -> {
-          SimpleOrderedMap<Object> map = f.getNamedPropertyValues(true);
-
-          // add the copy field destination field names
-          List<String> copyFieldNames =
-              schema.getCopyFieldsList((String) map.get("name")).stream().map(c -> c.getDestination().getName()).collect(Collectors.toList());
-          map.add("copyDest", String.join(",", copyFieldNames));
-
-          return map;
-        })
+        .map(f -> fieldToMap(f, schema))
         .sorted(Comparator.comparing(map -> ((String) map.get("name"))))
         .collect(Collectors.toList()));
 
@@ -1599,6 +1612,17 @@ public class SchemaDesignerAPI {
     //response.put("problems", problems);
 
     return response;
+  }
+
+  protected SimpleOrderedMap<Object> fieldToMap(SchemaField f, ManagedIndexSchema schema) {
+    SimpleOrderedMap<Object> map = f.getNamedPropertyValues(true);
+
+    // add the copy field destination field names
+    List<String> copyFieldNames =
+        schema.getCopyFieldsList((String) map.get("name")).stream().map(c -> c.getDestination().getName()).collect(Collectors.toList());
+    map.add("copyDest", String.join(",", copyFieldNames));
+
+    return map;
   }
 
   protected void addSettingsToResponse(Map<String, Object> settings, Map<String, Object> response) {

@@ -732,6 +732,12 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       $scope.showFieldDetails = true;
       delete $scope.sampleDocId;
       $scope.showAnalysis = false;
+
+      if (!$scope.treeFilter) {
+        $scope.treeFilter = "type";
+        $scope.treeFilterOption = "*";
+        $scope.initTreeFilters();
+      }
       return;
     }
 
@@ -1123,6 +1129,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       configSet: $scope.currentSchema,
       schemaVersion: $scope.schemaVersion
     }, putData, function (data) {
+
       $scope.schemaVersion = data.schemaVersion;
       $scope.currentSchema = data.configSet;
       $scope.core = data.core;
@@ -1639,11 +1646,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $('#schemaJsTree').jstree(true).select_node(nodeId);
   };
 
-  $scope.applyTreeFilterOption = function() {
-    if (!$scope.fields) {
-      return;
-    }
-
+  $scope.initTreeFilters = function() {
     $scope.treeFilterOptions = [];
     $scope.treeFilterOption = "";
     if ($scope.treeFilter === "type") {
@@ -1662,6 +1665,13 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       $scope.treeFilterOptions.unshift("*");
       $scope.treeFilterOption = "*";
     }
+  };
+
+  $scope.applyTreeFilterOption = function() {
+    if (!$scope.fields) {
+      return;
+    }
+    $scope.initTreeFilters();
     $scope.onTreeFilterOptionChanged();
   };
 

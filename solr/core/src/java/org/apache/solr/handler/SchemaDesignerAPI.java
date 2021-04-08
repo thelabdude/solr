@@ -52,6 +52,7 @@ import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.commons.io.FileUtils;
 import org.apache.http.HttpEntity;
@@ -102,16 +103,7 @@ import org.apache.solr.handler.loader.SampleDocumentsLoader;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.RawResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.schema.CopyField;
-import org.apache.solr.schema.DefaultSchemaSuggester;
-import org.apache.solr.schema.FieldType;
-import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.schema.ManagedIndexSchema;
-import org.apache.solr.schema.ManagedIndexSchemaFactory;
-import org.apache.solr.schema.SchemaField;
-import org.apache.solr.schema.SchemaSuggester;
-import org.apache.solr.schema.StrField;
-import org.apache.solr.schema.TextField;
+import org.apache.solr.schema.*;
 import org.apache.solr.update.processor.UpdateRequestProcessorChain;
 import org.apache.solr.util.RTimer;
 import org.apache.zookeeper.KeeperException;
@@ -1195,6 +1187,30 @@ public class SchemaDesignerAPI {
       throw exc;
     }
     rsp.getValues().addAll(qr.getResponse());
+  }
+
+  @EndPoint(method = GET,
+      path = "/schema-designer/diff",
+      permission = CONFIG_READ_PERM)
+  @SuppressWarnings("unchecked")
+  /**
+   * Get the diff of designer schema with the published schema. Only returns the diff if user is editing the configset
+   * that is already published
+   */
+  public void getSchemaDiff(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
+    final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "info");
+    boolean exists = configExists(configSet);
+
+    if (exists) {
+      String mutableId = getMutableId(configSet);
+      ManagedIndexSchema designerSchema = loadLatestSchema(mutableId, new HashMap<>());
+      ManagedIndexSchema zkSchema = loadLatestSchema(configSet, null);
+
+      Map<String, Object> diff = ManagedSchemaDiff.diff(zkSchema, designerSchema);
+
+      log.info("Diff: {}", diff);
+      rsp.getValues().addAll(diff);
+    }
   }
 
   @SuppressWarnings("unchecked")

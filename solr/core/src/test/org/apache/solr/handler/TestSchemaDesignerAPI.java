@@ -758,7 +758,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertEquals(Collections.singletonList(fieldName), srcFields);
   }
 
-  @SuppressWarnings({"unchecked", "raw"})
+  @SuppressWarnings({"unchecked", "rawtypes"})
   public void testSchemaDiffEndpoint() throws Exception {
     String configSet = "testJson";
 
@@ -800,7 +800,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     // Update id field to not use docValues
     List<SimpleOrderedMap<Object>> fields = (List<SimpleOrderedMap<Object>>) rsp.getValues().get("fields");
     SimpleOrderedMap<Object> idFieldMap = fields.stream().filter(field -> field.get("name").equals("id")).findFirst().get();
-    idFieldMap.remove("copyDest");
+    idFieldMap.remove("copyDest"); // Don't include copyDest as it is not a property of SchemaField
     SimpleOrderedMap<Object> idFieldMapUpdated = idFieldMap.clone();
     idFieldMapUpdated.setVal(idFieldMapUpdated.indexOf("docValues", 0), Boolean.FALSE);
     idFieldMapUpdated.setVal(idFieldMapUpdated.indexOf("useDocValuesAsStored", 0), Boolean.FALSE);
@@ -809,11 +809,11 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     SolrParams solrParams = idFieldMapUpdated.toSolrParams();
     Map<String, Object> mapParams = solrParams.toMap(new HashMap<>());
 
-    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM)));
+    reqParams.set(SCHEMA_VERSION_PARAM, rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM));
 
     ObjectMapper objectMapper = new ObjectMapper();
-    ContentStreamBase.StringStream stream = new ContentStreamBase.StringStream(objectMapper.writeValueAsString(mapParams), JSON_MIME);
-    when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+    ContentStreamBase.StringStream stringStream = new ContentStreamBase.StringStream(objectMapper.writeValueAsString(mapParams), JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(stringStream));
 
     rsp = new SolrQueryResponse();
     schemaDesignerAPI.updateSchemaObject(req, rsp);
@@ -822,26 +822,51 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     Integer schemaVersion = rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM);
     reqParams.set(SCHEMA_VERSION_PARAM, schemaVersion);
     ContentStreamBase.FileStream fileStream = new ContentStreamBase.FileStream(getFile("schema-designer/add-new-field.json"));
-    stream.setContentType(JSON_MIME);
+    fileStream.setContentType(JSON_MIME);
     when(req.getContentStreams()).thenReturn(Collections.singletonList(fileStream));
     rsp = new SolrQueryResponse();
-
     // POST /schema-designer/add
     schemaDesignerAPI.addSchemaObject(req, rsp);
     assertNotNull(rsp.getValues().get("add-field"));
 
+    // Add a new field type
+    schemaVersion = rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM);
+    reqParams.set(SCHEMA_VERSION_PARAM, schemaVersion);
+    fileStream = new ContentStreamBase.FileStream(getFile("schema-designer/add-new-type.json"));
+    fileStream.setContentType(JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(fileStream));
+    rsp = new SolrQueryResponse();
+    // POST /schema-designer/add
+    schemaDesignerAPI.addSchemaObject(req, rsp);
+    assertNotNull(rsp.getValues().get("add-field-type"));
+
     // Let's do a diff now
     rsp = new SolrQueryResponse();
     schemaDesignerAPI.getSchemaDiff(req, rsp);
+
+    // field asserts
     assertNotNull(rsp.getValues().get("fields"));
     Map<String, Object> fieldsDiff = (Map<String, Object>) rsp.getValues().get("fields");
     assertNotNull(fieldsDiff.get("updated"));
-    assertNotNull(fieldsDiff.get("added"));
     List<Object> idFieldChanges = (List<Object>) ((Map<String, Object>) fieldsDiff.get("updated")).get("id");
     assertEquals(idFieldMap, idFieldChanges.get(0));
     assertEquals(idFieldMapUpdated, idFieldChanges.get(1));
+    assertNotNull(fieldsDiff.get("added"));
+    Map<String, Object> fieldsAdded = (Map<String, Object>) fieldsDiff.get("added");
+    assertNotNull(fieldsAdded.get("keywords"));
 
-    System.out.println(rsp.getValues());
+    // field type asserts
+    assertNotNull(rsp.getValues().get("fieldTypes"));
+    Map<String, Object> fieldTypesDiff = (Map<String, Object>) rsp.getValues().get("fieldTypes");
+    assertNotNull(fieldTypesDiff.get("added"));
+    Map<String, Object> fieldTypesAdded = (Map<String, Object>) fieldTypesDiff.get("added");
+    assertNotNull(fieldTypesAdded.get("test_txt"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, String> transformSimpleOrderedMapToMap(SimpleOrderedMap<Object> som) {
+    SolrParams solrParams = som.toSolrParams();
+    return solrParams.toMap(new HashMap<>());
   }
 
   @SuppressWarnings("rawtypes")

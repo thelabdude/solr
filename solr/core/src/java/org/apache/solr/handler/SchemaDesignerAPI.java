@@ -1208,7 +1208,6 @@ public class SchemaDesignerAPI {
 
       Map<String, Object> diff = ManagedSchemaDiff.diff(zkSchema, designerSchema);
 
-      log.info("Diff: {}", diff);
       rsp.getValues().addAll(diff);
     }
   }

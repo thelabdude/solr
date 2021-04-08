@@ -75,6 +75,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     $scope.analysisVerbose = false;
     $scope.updateWorking = false;
     $scope.currentSchema = "";
+    $scope.Object = Object;
 
     delete $scope.hasDocsOnServer;
     delete $scope.queryResultsTree;
@@ -561,6 +562,19 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     }, $scope.errorHandler);
   }
 
+  $scope.showDiff = function () {
+    var params = {
+      path: "diff",
+      configSet: $scope.currentSchema
+    };
+    SchemaDesigner.get(params, function (data) {
+      $scope.fieldsDiff = data.fields;
+      $scope.fieldTypesDiff = data.fieldTypes;
+      $scope.dynamicFieldsDiff = data.dynamicFields;
+      $scope.copyFieldsDiff = data.copyFields;
+    });
+  }
+
   $scope.togglePublish = function (event) {
     if (event) {
       var t = event.target || event.currentTarget;
@@ -573,6 +587,10 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     delete $scope.publishErrors;
 
     $scope.disableDesigner = "false";
+
+    if ($scope.showPublish) {
+      $scope.showDiff()
+    }
 
     if ($scope.showPublish && !$scope.newCollection) {
       $scope.newCollection = {numShards: 1, replicationFactor: 1, indexToCollection: "true"};

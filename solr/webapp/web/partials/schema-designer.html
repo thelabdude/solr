@@ -233,6 +233,87 @@ limitations under the License.
           </ul>
           <div ng-show="collectionsForConfig.length == 0" class="clearfix">No existing collections</div>
         </div>
+        <div id="show-diff">
+          <div id="fields-diff" ng-hide="fieldsDiff == null" ng-show="Object.keys(fieldsDiff).length > 0">
+            <div id="fields-updated" ng-show="Object.keys(fieldsDiff.updated).length > 0">
+              <p class="clearfix">Updated Fields</p>
+              <ul>
+                <li class="clearfix" ng-repeat="field in fieldsDiff.updated">
+                  Old field: {{field[0]}}
+                  New field: {{field[1]}}
+                </li>
+              </ul>
+            </div>
+            <div id="fields-added" ng-show="Object.keys(fieldsDiff.added).length > 0">
+              <p class="clearfix">Fields Added</p>
+              <ul>
+                <li class="clearfix" ng-repeat="field in fieldsDiff.added">{{field}}</li>
+              </ul>
+            </div>
+          <div id="fields-removed" ng-show="Object.keys(fieldsDiff.removed).length > 0">
+            <p class="clearfix">Fields Removed</p>
+            <ul>
+              <li class="clearfix" ng-repeat="field in fieldsDiff.removed">{{field}}</li>
+            </ul>
+          </div>
+        </div>
+          <div id="fieldtypes-diff" ng-hide="fieldTypesDiff == null" ng-show="Object.keys(fieldTypesDiff).length > 0">
+            <div id="fieldtypes-updated" ng-show="Object.keys(fieldTypesDiff.updated).length > 0">
+              <p class="clearfix">Updated Field Types</p>
+              <ul>
+                <li class="clearfix" ng-repeat="fieldtype in fieldTypesDiff.updated">
+                  Old field: {{fieldtype[0]}}
+                  New field: {{fieldtype[1]}}
+                </li>
+              </ul>
+            </div>
+            <div id="fieldtypes-added" ng-show="Object.keys(fieldTypesDiff.added).length > 0">
+              <p class="clearfix">New Field Types</p>
+              <ul>
+                <li class="clearfix" ng-repeat="fieldtype in fieldTypesDiff.added">{{fieldtype}}</li>
+              </ul>
+            </div>
+            <div id="fieldtypes-removed" ng-show="Object.keys(fieldTypesDiff.removed).length > 0">
+              <p class="clearfix">Removed Field Types</p>
+              <ul>
+                <li class="clearfix" ng-repeat="fieldtype in fieldTypesDiff.removed">{{fieldtype}}</li>
+              </ul>
+            </div>
+          </div>
+          <div id="dynamicfields-diff" ng-hide="dynamicFieldsDiff == null" ng-show="Object.keys(dynamicFieldsDiff).length > 0">
+            <div id="dynamicfields-updated" ng-show="Object.keys(dynamicFieldsDiff.updated).length > 0">
+              <p class="clearfix">Updated Dynamic Fields</p>
+              <ul>
+                <li class="clearfix" ng-repeat="dfield in dynamicFieldsDiff.updated">
+                  Old field: {{dfield[0]}}
+                  New field: {{dfield[1]}}
+                </li>
+              </ul>
+            </div>
+            <div id="dynamicfields-added" ng-show="Object.keys(dynamicFieldsDiff.added).length > 0">
+              <p class="clearfix">New Dynamic Fields</p>
+              <ul>
+                <li class="clearfix" ng-repeat="dfield in dynamicFieldsDiff.added">{{dfield}}</li>
+              </ul>
+            </div>
+            <div id="dynamicfields-removed" ng-show="Object.keys(dynamicFieldsDiff.removed).length > 0">
+              <p class="clearfix">Removed Dynamic Fields</p>
+              <ul>
+                <li class="clearfix" ng-repeat="dfield in dynamicFieldsDiff.removed">{{dfield}}</li>
+              </ul>
+            </div>
+          </div>
+          <div id="copyfields-diff" ng-hide="copyFieldsDiff == null" ng-show="Object.keys(copyFieldsDiff).length > 0">
+            <ul>
+              <li class="clearfix" ng-show="copyFieldsDiff.old.length > 0" ng-repeat="cfield in copyFieldsDiff.old">
+                -{{cfield}}
+              </li>
+              <li class="clearfix" ng-show="copyFieldsDiff.old.length > 0" ng-repeat="cfield in copyFieldsDiff.new">
+                +{{cfield}}
+              </li>
+            </ul>
+          </div>
+        </div>
         <div id="reload-form">
         <div class="field-form" ng-show="collectionsForConfig.length > 0">
           <input type="checkbox" ng-model="reloadOnPublish" id="reload_on_publish" title="reload affected collections" ng-true-value="'true'" ng-false-value="'false'"/>

@@ -1194,8 +1194,8 @@ public class SchemaDesignerAPI {
       permission = CONFIG_READ_PERM)
   @SuppressWarnings("unchecked")
   /**
-   * Get the diff of designer schema with the published schema. Only returns the diff if user is editing the configset
-   * that is already published
+   * Get the diff of designer schema with the published schema. Only returns the diff if user
+   * is editing the configset that is already published
    */
   public void getSchemaDiff(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "info");

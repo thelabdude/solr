@@ -18,13 +18,9 @@
 package org.apache.solr.handler;
 
 import java.io.File;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
@@ -760,6 +756,92 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertTrue(schemaField.stored());
     List<String> srcFields = schema.getCopySources("_text_");
     assertEquals(Collections.singletonList(fieldName), srcFields);
+  }
+
+  @SuppressWarnings({"unchecked", "raw"})
+  public void testSchemaDiffEndpoint() throws Exception {
+    String configSet = "testJson";
+
+    ModifiableSolrParams reqParams = new ModifiableSolrParams();
+
+    // Use the prep endpoint to prepare the new schema
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    SolrQueryResponse rsp = new SolrQueryResponse();
+    SolrQueryRequest req = mock(SolrQueryRequest.class);
+    when(req.getParams()).thenReturn(reqParams);
+    schemaDesignerAPI.prepNewSchema(req, rsp);
+    assertNotNull(rsp.getValues().get(CONFIG_SET_PARAM));
+    assertNotNull(rsp.getValues().get(SCHEMA_VERSION_PARAM));
+
+    // publish schema to a config set that can be used by real collections
+    reqParams.clear();
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(rsp.getValues().get(SCHEMA_VERSION_PARAM)));
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+
+    String collection = "test123";
+    reqParams.set(NEW_COLLECTION_PARAM, collection);
+    reqParams.set(INDEX_TO_COLLECTION_PARAM, true);
+    reqParams.set(RELOAD_COLLECTIONS_PARAM, true);
+    reqParams.set(CLEANUP_TEMP_PARAM, true);
+
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.publish(req, rsp);
+
+    assertNotNull(cc.getZkController().zkStateReader.getCollection(collection));
+
+    // Load the schema designer for the existing config set and make some changes to it
+    reqParams.clear();
+    reqParams.set(CONFIG_SET_PARAM, configSet);
+    reqParams.set(ENABLE_DYNAMIC_FIELDS_PARAM, "true");
+    reqParams.set(ENABLE_FIELD_GUESSING_PARAM, "false");
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.analyze(req, rsp);
+
+    // Update id field to not use docValues
+    List<SimpleOrderedMap<Object>> fields = (List<SimpleOrderedMap<Object>>) rsp.getValues().get("fields");
+    SimpleOrderedMap<Object> idFieldMap = fields.stream().filter(field -> field.get("name").equals("id")).findFirst().get();
+    idFieldMap.remove("copyDest");
+    SimpleOrderedMap<Object> idFieldMapUpdated = idFieldMap.clone();
+    idFieldMapUpdated.setVal(idFieldMapUpdated.indexOf("docValues", 0), Boolean.FALSE);
+    idFieldMapUpdated.setVal(idFieldMapUpdated.indexOf("useDocValuesAsStored", 0), Boolean.FALSE);
+    idFieldMapUpdated.setVal(idFieldMapUpdated.indexOf("omitTermFreqAndPositions", 0), Boolean.FALSE);
+
+    SolrParams solrParams = idFieldMapUpdated.toSolrParams();
+    Map<String, Object> mapParams = solrParams.toMap(new HashMap<>());
+
+    reqParams.set(SCHEMA_VERSION_PARAM, String.valueOf(rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM)));
+
+    ObjectMapper objectMapper = new ObjectMapper();
+    ContentStreamBase.StringStream stream = new ContentStreamBase.StringStream(objectMapper.writeValueAsString(mapParams), JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(stream));
+
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.updateSchemaObject(req, rsp);
+
+    // Add a new field
+    Integer schemaVersion = rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM);
+    reqParams.set(SCHEMA_VERSION_PARAM, schemaVersion);
+    ContentStreamBase.FileStream fileStream = new ContentStreamBase.FileStream(getFile("schema-designer/add-new-field.json"));
+    stream.setContentType(JSON_MIME);
+    when(req.getContentStreams()).thenReturn(Collections.singletonList(fileStream));
+    rsp = new SolrQueryResponse();
+
+    // POST /schema-designer/add
+    schemaDesignerAPI.addSchemaObject(req, rsp);
+    assertNotNull(rsp.getValues().get("add-field"));
+
+    // Let's do a diff now
+    rsp = new SolrQueryResponse();
+    schemaDesignerAPI.getSchemaDiff(req, rsp);
+    assertNotNull(rsp.getValues().get("fields"));
+    Map<String, Object> fieldsDiff = (Map<String, Object>) rsp.getValues().get("fields");
+    assertNotNull(fieldsDiff.get("updated"));
+    assertNotNull(fieldsDiff.get("added"));
+    List<Object> idFieldChanges = (List<Object>) ((Map<String, Object>) fieldsDiff.get("updated")).get("id");
+    assertEquals(idFieldMap, idFieldChanges.get(0));
+    assertEquals(idFieldMapUpdated, idFieldChanges.get(1));
+
+    System.out.println(rsp.getValues());
   }
 
   @SuppressWarnings("rawtypes")

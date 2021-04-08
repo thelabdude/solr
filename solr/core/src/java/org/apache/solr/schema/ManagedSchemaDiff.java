@@ -87,7 +87,7 @@ public class ManagedSchemaDiff {
 
   protected static Map<String, SimpleOrderedMap<Object>> mapFieldsToPropertyValues(Map<String, SchemaField> fields) {
     Map<String, SimpleOrderedMap<Object>> propValueMap = new HashMap<>();
-    fields.forEach((k, v) -> propValueMap.put(k, v.getNamedPropertyValues(false)));
+    fields.forEach((k, v) -> propValueMap.put(k, v.getNamedPropertyValues(true)));
     return propValueMap;
   }
 

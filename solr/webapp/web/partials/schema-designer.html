@@ -314,6 +314,7 @@ limitations under the License.
             </ul>
           </div>
         </div>
+
         <div id="reload-form">
         <div class="field-form" ng-show="collectionsForConfig.length > 0">
           <input type="checkbox" ng-model="reloadOnPublish" id="reload_on_publish" title="reload affected collections" ng-true-value="'true'" ng-false-value="'false'"/>
@@ -652,7 +653,7 @@ limitations under the License.
                     <input type="text" id="copy_dest" ng-model="selectedNode.copyDest" ng-change="markSelectedUpdated($event)" placeholder="specify your destination field(s) (comma-delimited)">
                     <a ng-click="showHelp('copyToHelp')"><img class="help-ico" src="img/ico/question-white.png"/></a>
                     <div id="copyToHelp" class="help" ng-show="helpId === 'copyToHelp'">
-                      <div class="help-wider">
+                      <div class="help-top">
                         <p>Copy fields allow you to apply several distinct field types to a single piece of incoming information during indexing. For instance, a common approach is to copy important string fields into the catch-all '_text_' field to enable full-text matches on terms contained in string fields. Provide a comma-delimited list of fields to copy into during indexing. For more information about copy fields, see:
                         <div class="help-anchor">
                           <a target="_blank" href="https://solr.apache.org/guide/8_8/copying-fields.html">Copy Fields</a>

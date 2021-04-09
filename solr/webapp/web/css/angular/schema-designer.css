@@ -986,7 +986,7 @@ limitations under the License.
 
 #content #designer #schema-root-details #unique_key
 {
-  width: 200px;
+  width: 150px;
 }
 
 #content #designer #schema-root-details .note span
@@ -1225,10 +1225,10 @@ limitations under the License.
   -moz-box-shadow: 5px 5px 10px #c0c0c0;
   -webkit-box-shadow: 5px 5px 10px #c0c0c0;
   position: absolute;
-  left: -70px;
+  left: -90px;
   top: 0px;
   padding: 6px;
-  width: 420px;
+  width: 390px;
 }
 
 #content #designer .help div.help-wider
@@ -1243,7 +1243,22 @@ limitations under the License.
   left: 0px;
   top: 0px;
   padding: 6px;
-  width: 470px;
+  width: 430px;
+}
+
+#content #designer .help div.help-top
+{
+  z-index: 200;
+  background-color: #FCF0AD;
+  border: 1px solid #f0f0f0;
+  box-shadow: 5px 5px 10px #c0c0c0;
+  -moz-box-shadow: 5px 5px 10px #c0c0c0;
+  -webkit-box-shadow: 5px 5px 10px #c0c0c0;
+  position: absolute;
+  left: 0px;
+  top: -200px;
+  padding: 6px;
+  width: 420px;
 }
 
 #content #designer .help-anchor

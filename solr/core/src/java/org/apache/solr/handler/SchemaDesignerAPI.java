@@ -76,6 +76,7 @@ import org.apache.solr.cloud.ZkController;
 import org.apache.solr.cloud.ZkSolrResourceLoader;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.common.SolrInputField;
 import org.apache.solr.common.cloud.ClusterState;
 import org.apache.solr.common.cloud.DocCollection;
 import org.apache.solr.common.cloud.Replica;
@@ -102,7 +103,16 @@ import org.apache.solr.handler.loader.SampleDocumentsLoader;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.RawResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.schema.*;
+import org.apache.solr.schema.CopyField;
+import org.apache.solr.schema.DefaultSchemaSuggester;
+import org.apache.solr.schema.FieldType;
+import org.apache.solr.schema.IndexSchema;
+import org.apache.solr.schema.ManagedIndexSchema;
+import org.apache.solr.schema.ManagedIndexSchemaFactory;
+import org.apache.solr.schema.SchemaField;
+import org.apache.solr.schema.SchemaSuggester;
+import org.apache.solr.schema.StrField;
+import org.apache.solr.schema.TextField;
 import org.apache.solr.update.processor.UpdateRequestProcessorChain;
 import org.apache.solr.util.RTimer;
 import org.apache.zookeeper.KeeperException;
@@ -368,17 +378,19 @@ public class SchemaDesignerAPI {
     String textValue = null;
     if (isEmpty(docId)) {
       // no doc ID from client ... find the first doc with a non-empty string value for fieldName
-      Optional<SolrInputDocument> doc = docs.stream().filter(d -> d.getFieldValue(fieldName) != null && !d.getFieldValue(fieldName).toString().isEmpty()).findFirst();
+      Optional<SolrInputDocument> doc = docs.stream()
+          .filter(d -> d.getField(fieldName) != null && d.getField(fieldName).getFirstValue() != null && !d.getField(fieldName).getFirstValue().toString().isEmpty())
+          .findFirst();
       if (doc.isPresent()) {
         docId = doc.get().getFieldValue(idField).toString();
-        textValue = doc.get().getFieldValue(fieldName).toString();
+        textValue = doc.get().getField(fieldName).getFirstValue().toString();
       }
     } else {
       final String idFilter = docId;
       Optional<SolrInputDocument> doc = docs.stream().filter(d -> idFilter.equals(d.getFieldValue(idField))).findFirst();
       if (doc.isPresent()) {
-        Object fieldValue = doc.get().getFieldValue(fieldName);
-        textValue = fieldValue != null ? fieldValue.toString() : "";
+        SolrInputField field = doc.get().getField(fieldName);
+        textValue = field != null && field.getFirstValue() != null ? field.getFirstValue().toString() : "";
       }
     }
 
@@ -985,7 +997,8 @@ public class SchemaDesignerAPI {
       if (docs.isEmpty()) {
         // no docs, but if this schema has already been published, it's OK, we can skip the docs part
         if (!configExists(configSet)) {
-          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "No sample documents provided for analyzing schema!");
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+              "No sample documents provided for analyzing schema! Only CSV/TSV, XML, JSON, and JSON lines supported.");
         }
       }
     }

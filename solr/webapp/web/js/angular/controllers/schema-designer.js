@@ -200,6 +200,12 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       return;
     }
 
+    $scope.newSchema = $scope.newSchema.trim();
+    if ($scope.newSchema.length > 50) {
+      $scope.addMessage = "Schema name be 50 characters or less";
+      return;
+    }
+
     if ($scope.newSchema.indexOf(" ") !== -1 || $scope.newSchema.indexOf("/") !== -1) {
       $scope.addMessage = "Schema name should not contain spaces or /";
       return;
@@ -385,7 +391,11 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
               } else if (source === "blob") {
                 source = "previous upload stored on the server"
               }
-              $scope.updateStatusMessage = "Analyzed "+data.numDocs+" docs from "+source;
+              if (data.numDocs > 0) {
+                $scope.updateStatusMessage = "Analyzed "+data.numDocs+" docs from "+source;
+              } else {
+                $scope.updateStatusMessage = "Schema '"+$scope.currentSchema+"' loaded.";
+              }
               $timeout(function () {
                 delete $scope.updateStatusMessage;
               }, 5000);
@@ -975,7 +985,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
       var fd = new FormData();
       fd.append('file', file);
       SchemaDesigner.upload(params, fd, function (data) {
-        delete $scope.fileUpload;
+        // delete $scope.fileUpload;
         $scope.onSchemaUpdated(schema, data, nodeId);
       }, $scope.errorHandler);
     } else {

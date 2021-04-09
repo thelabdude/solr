@@ -109,7 +109,7 @@ import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.ManagedIndexSchema;
 import org.apache.solr.schema.ManagedIndexSchemaFactory;
-import org.apache.solr.schema.ManagedSchemaDiff;
+import org.apache.solr.schema.ManagedSchemaDiff;1G
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.SchemaSuggester;
 import org.apache.solr.schema.StrField;

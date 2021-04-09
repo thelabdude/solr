@@ -1,11 +1,18 @@
 package org.apache.solr.schema;
 
-import org.apache.solr.common.util.SimpleOrderedMap;
-
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.solr.common.util.SimpleOrderedMap;
+
+/**
+ * Utility methods for comparing managed index schemas
+ */
 public class ManagedSchemaDiff {
 
   private static final String UPDATED_KEY_STRING = "updated";

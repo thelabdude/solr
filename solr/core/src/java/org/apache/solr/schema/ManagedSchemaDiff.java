@@ -49,7 +49,7 @@ public class ManagedSchemaDiff {
       }
     }
 
-    for (String fieldName: map2.keySet()) {
+    for (String fieldName : map2.keySet()) {
       if (!map1.containsKey(fieldName)) {
         newValues.put(fieldName, map2.get(fieldName));
       }
@@ -79,7 +79,7 @@ public class ManagedSchemaDiff {
       }
     });
 
-    Map<String, Object>  mapDiff = new HashMap<>();
+    Map<String, Object> mapDiff = new HashMap<>();
     mapDiff.put("old", oldList);
     mapDiff.put("new", newList);
     return mapDiff;
@@ -100,8 +100,8 @@ public class ManagedSchemaDiff {
   protected static Map<String, SimpleOrderedMap<Object>> mapDynamicFieldToPropValues(IndexSchema.DynamicField[] dynamicFields) {
     return
         Stream.of(dynamicFields)
-          .map(df -> Map.entry(df.getPrototype().getName(), df.getPrototype().getNamedPropertyValues(false)))
-          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            .map(df -> Map.entry(df.getPrototype().getName(), df.getPrototype().getNamedPropertyValues(false)))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   protected static List<SimpleOrderedMap<Object>> getCopyFieldList(ManagedIndexSchema indexSchema) {

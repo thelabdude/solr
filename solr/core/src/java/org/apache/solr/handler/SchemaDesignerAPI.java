@@ -1202,14 +1202,14 @@ public class SchemaDesignerAPI {
     rsp.getValues().addAll(qr.getResponse());
   }
 
+  /**
+   * Return the diff of designer schema with the published schema. Only returns the diff if user
+   * is editing the configset that is already published
+   */
   @EndPoint(method = GET,
       path = "/schema-designer/diff",
       permission = CONFIG_READ_PERM)
   @SuppressWarnings("unchecked")
-  /**
-   * Get the diff of designer schema with the published schema. Only returns the diff if user
-   * is editing the configset that is already published
-   */
   public void getSchemaDiff(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
     final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "info");
     boolean exists = configExists(configSet);

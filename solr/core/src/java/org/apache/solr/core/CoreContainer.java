@@ -43,6 +43,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
@@ -71,6 +72,7 @@ import org.apache.solr.cloud.CloudDescriptor;
 import org.apache.solr.cloud.ClusterSingleton;
 import org.apache.solr.cloud.OverseerTaskQueue;
 import org.apache.solr.cloud.ZkController;
+import org.apache.solr.cloud.api.collections.DistributedCollectionConfigSetCommandRunner;
 import org.apache.solr.cluster.events.ClusterEventProducer;
 import org.apache.solr.cluster.events.impl.ClusterEventProducerFactory;
 import org.apache.solr.cluster.placement.PlacementPluginConfig;
@@ -276,6 +278,12 @@ public class CoreContainer {
 
   private ExecutorService coreContainerAsyncTaskExecutor = ExecutorUtil.newMDCAwareCachedThreadPool("Core Container Async Task");
 
+  /**
+   * Non empty if the Collection API is executed in a distributed way and not on Overseer, once the CoreContainer has been initialized
+   * properly, i.e. method {@link #load()} called. Until then it is null, and it is not expected to be read.
+   */
+  private volatile Optional<DistributedCollectionConfigSetCommandRunner> distributedCollectionCommandRunner;
+
   private enum CoreInitFailedAction {fromleader, none}
 
   /**
@@ -353,9 +361,10 @@ public class CoreContainer {
   }
 
   public CoreContainer(NodeConfig config, CoresLocator locator, boolean asyncSolrCoreLoad) {
+    this.cfg = requireNonNull(config);
     this.loader = config.getSolrResourceLoader();
     this.solrHome = config.getSolrHome();
-    this.cfg = requireNonNull(config);
+
     try {
       containerHandlers.put(PublicKeyHandler.PATH, new PublicKeyHandler(cfg.getCloudConfig()));
     } catch (IOException | InvalidKeySpecException e) {
@@ -374,13 +383,13 @@ public class CoreContainer {
             new SolrNamedThreadFactory("replayUpdatesExecutor")));
 
     this.allowPaths = new java.util.HashSet<>();
-    this.allowPaths.add(cfg.getSolrHome());
-    this.allowPaths.add(cfg.getCoreRootDirectory());
+    addToAllowPath(cfg.getSolrHome());
+    addToAllowPath(cfg.getCoreRootDirectory());
     if (cfg.getSolrDataHome() != null) {
-      this.allowPaths.add(cfg.getSolrDataHome());
+      addToAllowPath(cfg.getSolrDataHome());
     }
     if (!cfg.getAllowPaths().isEmpty()) {
-      this.allowPaths.addAll(cfg.getAllowPaths());
+      addAllToAllowPath(cfg.getAllowPaths());
       if (log.isInfoEnabled()) {
         log.info("Allowing use of paths: {}", cfg.getAllowPaths());
       }
@@ -392,6 +401,14 @@ public class CoreContainer {
     } catch (Exception e) {
       log.warn("Unable to create [{}].  Features requiring this directory may fail.", userFilesPath, e);
     }
+  }
+
+  private void addToAllowPath(Path path) {
+    this.allowPaths.add(path.normalize());
+  }
+
+  private void addAllToAllowPath(Set<Path> paths) {
+    this.allowPaths.addAll(paths.stream().map( path -> path.normalize()).collect(Collectors.toSet()));
   }
 
   @SuppressWarnings({"unchecked"})
@@ -586,6 +603,7 @@ public class CoreContainer {
     cfg = null;
     containerProperties = null;
     replayUpdatesExecutor = null;
+    distributedCollectionCommandRunner = Optional.empty();
   }
 
   public static CoreContainer createAndLoad(Path solrHome) {
@@ -751,6 +769,15 @@ public class CoreContainer {
     coreConfigService = ConfigSetService.createConfigSetService(this);
     createHandler(ZK_PATH, ZookeeperInfoHandler.class.getName(), ZookeeperInfoHandler.class);
     createHandler(ZK_STATUS_PATH, ZookeeperStatusHandler.class.getName(), ZookeeperStatusHandler.class);
+
+    // CoreContainer is initialized enough at this stage so we can set distributedCollectionCommandRunner (the
+    // construction of DistributedCollectionConfigSetCommandRunner uses Zookeeper so can't be done from the CoreContainer constructor
+    // because there Zookeeper is not yet ready). Given this is used in the CollectionsHandler created next line, this is
+    // the latest point where distributedCollectionCommandRunner can be initialized without refactoring this method...
+    // TODO: manage to completely build CoreContainer in the constructor and not in the load() method... Requires some test refactoring.
+    this.distributedCollectionCommandRunner = isZooKeeperAware() && cfg.getCloudConfig().getDistributedCollectionConfigSetExecution() ?
+        Optional.of(new DistributedCollectionConfigSetCommandRunner(this)) : Optional.empty();
+
     collectionsHandler = createHandler(COLLECTIONS_HANDLER_PATH, cfg.getCollectionsHandlerClass(), CollectionsHandler.class);
     final CollectionsAPI collectionsAPI = new CollectionsAPI(collectionsHandler);
     containerHandlers.getApiBag().registerObject(collectionsAPI);
@@ -936,7 +963,9 @@ public class CoreContainer {
       });
 
       clusterSingletons.setReady();
-      zkSys.getZkController().checkOverseerDesignate();
+      if (!distributedCollectionCommandRunner.isPresent()) {
+        zkSys.getZkController().checkOverseerDesignate();
+      }
 
     }
     // This is a bit redundant but these are two distinct concepts for all they're accomplished at the same time.
@@ -1036,8 +1065,14 @@ public class CoreContainer {
 
     ZkController zkController = getZkController();
     if (zkController != null) {
-      OverseerTaskQueue overseerCollectionQueue = zkController.getOverseerCollectionQueue();
-      overseerCollectionQueue.allowOverseerPendingTasksToComplete();
+      if (distributedCollectionCommandRunner.isPresent()) {
+        // Local (i.e. distributed) Collection API processing
+        distributedCollectionCommandRunner.get().stopAndWaitForPendingTasksToComplete();
+      } else {
+        // Overseer based processing
+        OverseerTaskQueue overseerCollectionQueue = zkController.getOverseerCollectionQueue();
+        overseerCollectionQueue.allowOverseerPendingTasksToComplete();
+      }
     }
     if (log.isInfoEnabled()) {
       log.info("Shutting down CoreContainer instance={}", System.identityHashCode(this));
@@ -2213,6 +2248,10 @@ public class CoreContainer {
 
   public PlacementPluginFactory<? extends PlacementPluginConfig> getPlacementPluginFactory() {
     return placementPluginFactory;
+  }
+
+  public Optional<DistributedCollectionConfigSetCommandRunner> getDistributedCollectionCommandRunner() {
+    return this.distributedCollectionCommandRunner;
   }
 
   static {

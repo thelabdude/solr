@@ -72,7 +72,6 @@ import org.apache.solr.client.solrj.request.schema.SchemaRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.schema.SchemaResponse;
 import org.apache.solr.cloud.ZkConfigSetService;
-import org.apache.solr.cloud.ZkController;
 import org.apache.solr.cloud.ZkSolrResourceLoader;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
@@ -90,7 +89,6 @@ import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.Utils;
-import org.apache.solr.core.ConfigOverlay;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.NodeConfig;
 import org.apache.solr.core.PluginInfo;
@@ -113,12 +111,10 @@ import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.SchemaSuggester;
 import org.apache.solr.schema.StrField;
 import org.apache.solr.schema.TextField;
-import org.apache.solr.update.processor.UpdateRequestProcessorChain;
 import org.apache.solr.util.RTimer;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.data.Stat;
 import org.noggit.JSONParser;
-import org.noggit.JSONUtil;
 import org.noggit.ObjectBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -152,6 +148,7 @@ public class SchemaDesignerAPI {
   public static final String TEMP_COLLECTION_PARAM = "tempCollection";
   public static final String PUBLISHED_VERSION = "publishedVersion";
   public static final String DISABLE_DESIGNER_PARAM = "disableDesigner";
+  public static final String DISABLED = "disabled";
   public static final String DOC_ID_PARAM = "docId";
   public static final String FIELD_PARAM = "field";
   public static final String UNIQUE_KEY_FIELD_PARAM = "uniqueKeyField";
@@ -159,6 +156,7 @@ public class SchemaDesignerAPI {
   public static final String SOLR_CONFIG_XML = "solrconfig.xml";
   public static final String DESIGNER_KEY = "_designer.";
   public static final String LANGUAGES_PARAM = "languages";
+  public static final String CONFIGOVERLAY_JSON = "configoverlay.json";
 
   static final int MAX_SAMPLE_DOCS = 1000;
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -169,6 +167,7 @@ public class SchemaDesignerAPI {
   private final CoreContainer coreContainer;
   private final SchemaSuggester schemaSuggester;
   private final SampleDocumentsLoader sampleDocLoader;
+  private final SchemaDesignerSettingsDAO settingsDAO;
   private final Map<String, Integer> indexedVersion = new ConcurrentHashMap<>();
 
   public SchemaDesignerAPI(CoreContainer coreContainer) {
@@ -179,6 +178,7 @@ public class SchemaDesignerAPI {
     this.coreContainer = coreContainer;
     this.schemaSuggester = schemaSuggester;
     this.sampleDocLoader = sampleDocLoader;
+    this.settingsDAO = new SchemaDesignerSettingsDAO(coreContainer.getResourceLoader(), coreContainer.getZkController());
   }
 
   public static SchemaSuggester newSchemaSuggester(NodeConfig config) {
@@ -205,6 +205,14 @@ public class SchemaDesignerAPI {
       loader.init(new NamedList<>());
     }
     return loader;
+  }
+
+  static String getConfigSetZkPath(final String configSet, final String childNode) {
+    String path = ZkConfigSetService.CONFIGS_ZKNODE + "/" + configSet;
+    if (childNode != null) {
+      path += "/" + childNode;
+    }
+    return path;
   }
 
   @EndPoint(method = GET,
@@ -338,7 +346,7 @@ public class SchemaDesignerAPI {
     List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
     if (!docs.isEmpty()) {
       try {
-        errorsDuringIndexing = indexSampleDocs(schema.getUniqueKeyField().getName(), docs, mutableId, true);
+        errorsDuringIndexing = indexSampleDocsWithRebuildOnAnalysisError(schema.getUniqueKeyField().getName(), docs, mutableId, true);
       } catch (SolrException exc) {
         solrExc = exc;
       }
@@ -464,11 +472,11 @@ public class SchemaDesignerAPI {
       permission = CONFIG_READ_PERM)
   @SuppressWarnings("unchecked")
   public void listConfigs(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
-    rsp.getValues().addAll(Collections.singletonMap("configSets", listConfigs()));
+    rsp.getValues().addAll(Collections.singletonMap("configSets", listEnabledConfigs()));
   }
 
-  protected Map<String, Boolean> listConfigs() throws IOException {
-    List<String> configsInZk = coreContainer.getConfigSetService().listConfigs();
+  protected Map<String, Boolean> listEnabledConfigs() throws IOException {
+    List<String> configsInZk = listConfigsInZk();
     final Map<String, Boolean> configs = configsInZk.stream()
         .filter(c -> !excludeConfigSetNames.contains(c) && !c.startsWith(DESIGNER_PREFIX))
         .collect(Collectors.toMap(c -> c, c -> !isDesignerDisabled(c)));
@@ -504,7 +512,7 @@ public class SchemaDesignerAPI {
     Path tmpDirectory = Files.createTempDirectory("schema-designer-" + configSet);
     File tmpDir = tmpDirectory.toFile();
     try {
-      coreContainer.getConfigSetService().downloadConfig(configId, tmpDirectory);
+      downloadConfig(configId, tmpDirectory);
       try (ZipOutputStream zipOut = new ZipOutputStream(baos)) {
         zipIt(tmpDir, "", zipOut);
       }
@@ -709,7 +717,7 @@ public class SchemaDesignerAPI {
     Map<Object, Throwable> errorsDuringIndexing = null;
     if (solrExc == null && !docs.isEmpty()) {
       try {
-        errorsDuringIndexing = indexSampleDocs(schema.getUniqueKeyField().getName(), docs, mutableId, false);
+        errorsDuringIndexing = indexSampleDocsWithRebuildOnAnalysisError(schema.getUniqueKeyField().getName(), docs, mutableId, false);
       } catch (SolrException exc) {
         solrExc = exc;
         updateError = "Failed to re-index sample documents after update to the " + name + " " + updateType + " due to: " + solrExc.getMessage();
@@ -733,6 +741,8 @@ public class SchemaDesignerAPI {
       response.put("updateErrorCode", 400);
       response.put("updateError", "Failed to re-index sample documents after update to the " + name + " " + updateType);
     }
+
+    response.put("rebuild", needsRebuild);
 
     rsp.getValues().addAll(response);
   }
@@ -824,6 +834,15 @@ public class SchemaDesignerAPI {
       log.warn("Need to rebuild the temp collection for {} after field {} updated to multi-valued {}", configSet, name, multiValued);
     }
 
+    if (!needsRebuild) {
+      // check term vectors too
+      Boolean storeTermVector = (Boolean) fieldAttributes.getOrDefault("termVectors", Boolean.FALSE);
+      if (schemaField.storeTermVector() != storeTermVector) {
+        // cannot change termVectors w/o a full-rebuild
+        needsRebuild = true;
+      }
+    }
+
     log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
     ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
 
@@ -874,7 +893,7 @@ public class SchemaDesignerAPI {
     // check the versions agree
     checkSchemaVersion(mutableId, schemaVersion, -1);
 
-    Map<String, Object> settings = getDesignerSettings(mutableId);
+    Map<String, Object> settings = getDesignerSettings(loadLatestConfig(mutableId));
     final Number publishedVersion = (Number) settings.get(DESIGNER_KEY + PUBLISHED_VERSION);
     if (publishedVersion != null) {
       int currentVersionOfSrc = getCurrentSchemaVersion(configSet);
@@ -898,7 +917,7 @@ public class SchemaDesignerAPI {
       zkClient.zkTransfer(ZkConfigSetService.CONFIGS_ZKNODE + "/" + mutableId, true,
           ZkConfigSetService.CONFIGS_ZKNODE + "/" + configSet, true, true);
     } else {
-      coreContainer.getConfigSetService().copyConfig(mutableId, configSet);
+      copyConfig(mutableId, configSet);
     }
 
     boolean reloadCollections = req.getParams().getBool(RELOAD_COLLECTIONS_PARAM, false);
@@ -934,7 +953,7 @@ public class SchemaDesignerAPI {
     }
 
     boolean disableDesigner = req.getParams().getBool(DISABLE_DESIGNER_PARAM, false);
-    settings.put(DESIGNER_KEY + "disabled", disableDesigner);
+    settings.put(DESIGNER_KEY + DISABLED, disableDesigner);
     saveDesignerSettings(configSet, settings);
 
     Map<String, Object> response = new HashMap<>();
@@ -1009,7 +1028,7 @@ public class SchemaDesignerAPI {
 
     String mutableId = getMutableId(configSet);
 
-    // holds additional settings needed by the designer to maintain state 
+    // holds additional settings needed by the designer to maintain state
     Map<String, Object> settings = new HashMap<>();
     ManagedIndexSchema schema = getMutableSchemaForConfigSet(configSet, schemaVersion, copyFrom, settings);
 
@@ -1098,7 +1117,7 @@ public class SchemaDesignerAPI {
     // index the sample docs using the suggested schema
     Map<Object, Throwable> errorsDuringIndexing = null;
     if (!docs.isEmpty()) {
-      errorsDuringIndexing = indexSampleDocs(schema.getUniqueKeyField().getName(), docs, mutableId, false);
+      errorsDuringIndexing = indexSampleDocsWithRebuildOnAnalysisError(schema.getUniqueKeyField().getName(), docs, mutableId, false);
     }
 
     if (saveDesignerSettings(mutableId, settings)) {
@@ -1177,7 +1196,7 @@ public class SchemaDesignerAPI {
       log.debug("Schema for collection {} is stale ({} != {}), need to re-index sample docs", mutableId, version, currentVersion);
       List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
       ManagedIndexSchema schema = loadLatestSchema(mutableId, null);
-      errorsDuringIndexing = indexSampleDocs(schema.getUniqueKeyField().getName(), docs, mutableId, true);
+      errorsDuringIndexing = indexSampleDocsWithRebuildOnAnalysisError(schema.getUniqueKeyField().getName(), docs, mutableId, true);
       // the version changes when you index (due to field guessing URP)
       currentVersion = getCurrentSchemaVersion(mutableId);
       indexedVersion.put(mutableId, currentVersion);
@@ -1306,14 +1325,6 @@ public class SchemaDesignerAPI {
     return DESIGNER_PREFIX + configSet;
   }
 
-  protected String getConfigSetZkPath(final String configSet, final String childNode) {
-    String path = ZkConfigSetService.CONFIGS_ZKNODE + "/" + configSet;
-    if (childNode != null) {
-      path += "/" + childNode;
-    }
-    return path;
-  }
-
   protected String getManagedSchemaZkPath(final String configSet) {
     return getConfigSetZkPath(configSet, DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME);
   }
@@ -1336,10 +1347,10 @@ public class SchemaDesignerAPI {
         }
         publishedVersion = getCurrentSchemaVersion(configSet);
         // ignore the copyFrom as we're making a mutable temp copy of an already published configSet
-        coreContainer.getConfigSetService().copyConfig(configSet, mutableId);
+        copyConfig(configSet, mutableId);
         copyFrom = configSet;
       } else {
-        coreContainer.getConfigSetService().copyConfig(copyFrom, mutableId);
+        copyConfig(copyFrom, mutableId);
       }
       log.info("Copied '{}' to new mutableId: {}", copyFrom, mutableId);
       isNew = true;
@@ -1356,7 +1367,7 @@ public class SchemaDesignerAPI {
 
     if (isNew) {
       if (!configSet.equals(copyFrom)) {
-        info.put(DESIGNER_KEY + "disabled", false);
+        info.put(DESIGNER_KEY + DISABLED, false);
       }
 
       // remember where this new one came from, unless the mutable is an edit of an already published schema,
@@ -1490,6 +1501,25 @@ public class SchemaDesignerAPI {
     return coreContainer.getZkController().getZkStateReader();
   }
 
+  protected Map<Object, Throwable> indexSampleDocsWithRebuildOnAnalysisError(String idField,
+                                                                             List<SolrInputDocument> docs,
+                                                                             final String collectionName,
+                                                                             boolean asBatch) throws Exception {
+    Map<Object, Throwable> results;
+    try {
+      results = indexSampleDocs(idField, docs, collectionName, asBatch);
+    } catch (IllegalArgumentException analysisExc) {
+      String errMsg = SolrException.getRootCause(analysisExc).getMessage();
+      log.warn("Rebuilding temp collection {} after low-level Lucene indexing issue: {}", collectionName, errMsg);
+      CollectionAdminRequest.deleteCollection(collectionName).process(cloudClient());
+      zkStateReader().waitForState(collectionName, 30, TimeUnit.SECONDS, Objects::isNull);
+      createCollection(collectionName, collectionName);
+      results = indexSampleDocs(idField, docs, collectionName, asBatch);
+      log.info("Re-index sample docs into {} after rebuild due to {} succeeded; results: {}", collectionName, errMsg, results);
+    }
+    return results;
+  }
+
   protected Map<Object, Throwable> indexSampleDocs(String idField,
                                                    List<SolrInputDocument> docs,
                                                    final String collectionName,
@@ -1519,12 +1549,12 @@ public class SchemaDesignerAPI {
         } catch (Exception exc) {
           Throwable rootCause = SolrException.getRootCause(exc);
           String rootMsg = String.valueOf(rootCause.getMessage());
-          if (rootMsg.contains("possible analysis error")) {
-            log.warn("Rebuilding temp collection {} after low-level Lucene indexing issue.", collectionName, rootCause);
-            // some change caused low-level lucene issues ... rebuild the collection
-            CollectionAdminRequest.deleteCollection(collectionName).process(cloudClient());
-            createCollection(collectionName, collectionName);
-            cloudSolrClient.add(collectionName, next, commitWithin);
+          if (rootCause instanceof IllegalArgumentException || rootMsg.contains("possible analysis error")) {
+            if (rootCause instanceof IllegalArgumentException) {
+              throw (IllegalArgumentException) rootCause;
+            } else {
+              throw new IllegalArgumentException(rootCause);
+            }
           } else {
             Object docId = next.getFieldValue(idField);
             if (docId == null) {
@@ -1608,7 +1638,7 @@ public class SchemaDesignerAPI {
         .collect(Collectors.toList()));
 
     if (settings == null) {
-      settings = getDesignerSettings(mutableId);
+      settings = getDesignerSettings(loadLatestConfig(mutableId));
     }
     addSettingsToResponse(settings, response);
 
@@ -1634,7 +1664,7 @@ public class SchemaDesignerAPI {
     Set<String> stripPrefix = files.stream().map(f -> f.startsWith(prefix) ? f.substring(prefixLen) : f).collect(Collectors.toSet());
     stripPrefix.remove(DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME);
     stripPrefix.remove("lang");
-    stripPrefix.remove("configoverlay.json"); // treat this file as private
+    stripPrefix.remove(CONFIGOVERLAY_JSON); // treat this file as private
 
     List<String> sortedFiles = new ArrayList<>(stripPrefix);
     Collections.sort(sortedFiles);
@@ -2038,105 +2068,12 @@ public class SchemaDesignerAPI {
     return option;
   }
 
-  protected Map<String, Object> getDesignerSettings(String collection) {
-    return getDesignerSettings(loadLatestConfig(collection));
-  }
-
   protected Map<String, Object> getDesignerSettings(SolrConfig solrConfig) {
-    Map<String, Object> map = new HashMap<>();
-    boolean isFieldGuessingEnabled = true;
-
-    if (solrConfig != null) {
-      ConfigOverlay overlay = solrConfig.getOverlay();
-      Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : null;
-      if (userProps != null) {
-        map.putAll(userProps);
-      }
-      isFieldGuessingEnabled = isFieldGuessingEnabled(solrConfig);
-    }
-
-    map.putIfAbsent(AUTO_CREATE_FIELDS, isFieldGuessingEnabled);
-    map.putIfAbsent(DESIGNER_KEY + LANGUAGES_PARAM, Collections.emptyList());
-    map.putIfAbsent(DESIGNER_KEY + ENABLE_DYNAMIC_FIELDS_PARAM, true);
-    map.putIfAbsent(DESIGNER_KEY + ENABLE_NESTED_DOCS_PARAM, false);
-    return map;
+    return settingsDAO.getSettings(solrConfig);
   }
 
-  protected boolean isFieldGuessingEnabled(SolrConfig solrConfig) {
-    boolean hasPlugin = false;
-    List<PluginInfo> plugins = solrConfig.getPluginInfos(UpdateRequestProcessorChain.class.getName());
-    if (plugins != null) {
-      for (PluginInfo next : plugins) {
-        if ("add-unknown-fields-to-the-schema".equals(next.name)) {
-          hasPlugin = true;
-          break;
-        }
-      }
-    }
-
-    boolean isEnabled = hasPlugin;
-    if (hasPlugin) {
-      ConfigOverlay overlay = solrConfig.getOverlay();
-      if (overlay != null) {
-        Map<String, Object> userProps = overlay.getUserProps();
-        if (userProps != null) {
-          Boolean autoCreateFields = (Boolean) userProps.get(AUTO_CREATE_FIELDS);
-          if (autoCreateFields != null) {
-            isEnabled = autoCreateFields;
-          }
-        }
-      }
-    }
-    return isEnabled;
-  }
-
-  protected void setUserPropertyOnConfig(String collection, String propertyName, Object propertyValue) throws IOException {
-    String url = getBaseUrl(collection) + "/" + collection + "/config";
-    Map<String, Object> setUserProp = Collections.singletonMap("set-user-property", Collections.singletonMap(propertyName, propertyValue));
-    HttpPost httpPost = null;
-    try {
-      httpPost = new HttpPost(url);
-      httpPost.setHeader("Content-Type", "application/json");
-      httpPost.setEntity(new ByteArrayEntity(JSONUtil.toJSON(setUserProp).getBytes(StandardCharsets.UTF_8)));
-      HttpResponse httpResponse = cloudClient().getHttpClient().execute(httpPost);
-      if (httpResponse.getStatusLine().getStatusCode() != 200) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to set user property '" + propertyName + "' to " +
-            propertyValue + " for " + collection + " due to: " + EntityUtils.toString(httpResponse.getEntity(), StandardCharsets.UTF_8));
-      }
-    } finally {
-      if (httpPost != null) {
-        httpPost.releaseConnection();
-      }
-    }
-  }
-
-  protected boolean saveDesignerSettings(String configSet, Map<String, Object> settings) {
-
-    SolrResourceLoader resourceLoader = coreContainer.getResourceLoader();
-    ZkSolrResourceLoader zkLoader =
-        new ZkSolrResourceLoader(resourceLoader.getInstancePath(), configSet, resourceLoader.getClassLoader(), coreContainer.getZkController());
-    SolrConfig solrConfig = SolrConfig.readFromResourceLoader(zkLoader, SOLR_CONFIG_XML, true, null);
-    ConfigOverlay overlay = solrConfig.getOverlay();
-
-    // Get what's stored in ZK
-    boolean changed = false;
-    Map<String, Object> storedUserProps = overlay.getUserProps();
-    for (String prop : settings.keySet()) {
-      Object propValue = settings.get(prop);
-      if (!propValue.equals(storedUserProps.get(prop))) {
-        // calling the API to update the overlay reloads the collection for each prop, i.e. too slows
-        //setUserPropertyOnConfig(collection, prop, propValue);
-        overlay = overlay.setUserProperty(prop, propValue);
-        changed = true;
-      }
-    }
-
-    if (changed) {
-      ZkController.persistConfigResourceToZooKeeper(zkLoader, overlay.getZnodeVersion(),
-          ConfigOverlay.RESOURCE_NAME, overlay.toByteArray(), true);
-    }
-
-    return changed;
+  protected boolean saveDesignerSettings(String configSet, Map<String, Object> settings) throws InterruptedException, IOException, KeeperException {
+    return settingsDAO.persistIfChanged(configSet, settings);
   }
 
   protected int requireSchemaVersionFromClient(SolrQueryRequest req, String action) {
@@ -2167,37 +2104,8 @@ public class SchemaDesignerAPI {
     }
   }
 
-  @SuppressWarnings("unchecked")
-  protected ConfigOverlay getConfigOverlay(SolrZkClient zkClient, String config) throws IOException, KeeperException, InterruptedException {
-    ConfigOverlay overlay = null;
-    String path = getConfigSetZkPath(config, "configoverlay.json");
-    byte[] data = null;
-    Stat stat = new Stat();
-    try {
-      data = zkClient.getData(path, null, stat, true);
-    } catch (KeeperException.NoNodeException nne) {
-      // ignore
-    }
-    if (data != null && data.length > 0) {
-      Map<String, Object> json = (Map<String, Object>) ObjectBuilder.getVal(new JSONParser(new String(data, StandardCharsets.UTF_8)));
-      overlay = new ConfigOverlay(json, stat.getVersion());
-    }
-    return overlay;
-  }
-
   protected boolean isDesignerDisabled(String configSet) {
-    // filter out any configs that don't want to be edited by the Schema Designer
-    // this allows users to lock down specific configs from being edited by the designer
-    boolean disabled;
-    try {
-      ConfigOverlay overlay = getConfigOverlay(zkStateReader().getZkClient(), configSet);
-      Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : Collections.emptyMap();
-      disabled = (boolean) userProps.getOrDefault(DESIGNER_KEY + "disabled", false);
-    } catch (Exception exc) {
-      log.error("Failed to load configoverlay.json for configset {}", configSet, exc);
-      disabled = true; // error on the side of caution here
-    }
-    return disabled;
+    return settingsDAO.isDesignerDisabled(configSet);
   }
 
   protected void cleanupTemp(String configSet) throws IOException, SolrServerException {
@@ -2208,11 +2116,27 @@ public class SchemaDesignerAPI {
     // delete the sample doc blob
     cloudSolrClient.deleteByQuery(".system", "id:" + configSet + "_sample/*", 10);
     cloudSolrClient.commit(".system", true, true);
-    coreContainer.getConfigSetService().deleteConfig(mutableId);
+    deleteConfig(mutableId);
   }
 
-  protected boolean configExists(String configSet) throws IOException {
+  private boolean configExists(String configSet) throws IOException {
     return coreContainer.getConfigSetService().checkConfigExists(configSet);
+  }
+
+  private List<String> listConfigsInZk() throws IOException {
+    return coreContainer.getConfigSetService().listConfigs();
+  }
+
+  private void deleteConfig(String configSet) throws IOException {
+    coreContainer.getConfigSetService().deleteConfig(configSet);
+  }
+
+  private void copyConfig(String from, String to) throws IOException {
+    coreContainer.getConfigSetService().copyConfig(from, to);
+  }
+
+  private void downloadConfig(String configName, Path dir) throws IOException {
+    coreContainer.getConfigSetService().downloadConfig(configName, dir);
   }
 
   private static class InMemoryResourceLoader extends SolrResourceLoader {

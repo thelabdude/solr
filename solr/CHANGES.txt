@@ -120,6 +120,8 @@ when told to. The admin UI now tells it to. (Nazerke Seidan, David Smiley)
   a minor performance boost to some cases (e.g. interval facets).  Reduced need for Filter.java.
   (Michael Gibney, David Smiley)
 
+* SOLR-15329: Improve HDFS Directory size calculation (Andras Salamon via Mike Drob)
+
 Other Changes
 ----------------------
 * SOLR-14656: Autoscaling framework removed (Ishan Chattopadhyaya, noble, Ilan Ginzburg)
@@ -270,6 +272,12 @@ Other Changes
 
 * SOLR-15356: UninvertDocValuesMergePolicy was removed because it's incompatible with Lucene 9.
   (David Smiley, Christine Poerschke)
+
+* SOLR-15238: Overhaul distributed-tracing.  Solr's "samplePercentage" is gone; tracing is either
+  enabled and you always have trace IDs or it isn't, based on wether you configure a tracing plugin.
+  Reporting of traces to a server like Zipkin is a configuration matter of the tracing plugin you
+  use.  The Jaeger plugin is now completely configurable via system properties or environment vars,
+  not by values in solr.xml.
 
 Bug Fixes
 ---------------------

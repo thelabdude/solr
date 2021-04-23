@@ -380,9 +380,14 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
           if ($scope.selectedUpdated) {
             $scope.selectedUpdated = false;
             $scope.updateStatusMessage = "Changes applied successfully.";
+            var waitMs = 3000;
+            if (data.rebuild) {
+              $scope.updateStatusMessage += " Did full re-index of sample docs due to incompatible update.";
+              waitMs = 5000; // longer message, more time to read
+            }
             $timeout(function () {
               delete $scope.updateStatusMessage;
-            }, 3000);
+            }, waitMs);
           } else {
             var source = data.sampleSource;
             if (source) {

@@ -33,7 +33,6 @@ import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrException;
-import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -70,6 +69,7 @@ import static org.apache.solr.handler.SchemaDesignerAPI.NEW_COLLECTION_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.RELOAD_COLLECTIONS_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.SCHEMA_VERSION_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.UNIQUE_KEY_FIELD_PARAM;
+import static org.apache.solr.handler.SchemaDesignerAPI.getMutableId;
 import static org.apache.solr.response.RawResponseWriter.CONTENT;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -136,7 +136,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     rsp = new SolrQueryResponse();
     schemaDesignerAPI.cleanupTemp(req, rsp);
 
-    String mutableId = schemaDesignerAPI.getMutableId(configSet);
+    String mutableId = getMutableId(configSet);
     assertFalse(cc.getZkController().getClusterState().hasCollection(mutableId));
     SolrZkClient zkClient = cc.getZkController().getZkClient();
     assertFalse(zkClient.exists("/configs/" + mutableId, true));
@@ -668,12 +668,10 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertTrue(collections.contains(collection));
 
     // verify temp designer objects were cleaned up during the publish operation ...
-    String mutableId = schemaDesignerAPI.getMutableId(configSet);
+    String mutableId = getMutableId(configSet);
     assertFalse(cc.getZkController().getClusterState().hasCollection(mutableId));
     SolrZkClient zkClient = cc.getZkController().getZkClient();
     assertFalse(zkClient.exists("/configs/" + mutableId, true));
-    final List<SolrInputDocument> docs = schemaDesignerAPI.loadSampleDocsFromBlobStore(configSet);
-    assertTrue(docs.isEmpty());
 
     SolrQuery query = new SolrQuery("*:*");
     query.setRows(0);
@@ -728,24 +726,29 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertEquals(Boolean.FALSE, field.get("multiValued"));
     assertEquals("string", field.get("type"));
 
+    String mutableId = getMutableId(configSet);
+    SchemaDesignerConfigSetHelper configSetHelper =
+        new SchemaDesignerConfigSetHelper(cc, SchemaDesignerAPI.newSchemaSuggester(cc.getConfig()),
+            new SchemaDesignerSettingsDAO(cc.getResourceLoader(), cc.getZkController()));
+    ManagedIndexSchema schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+
     // make it required
     Map<String, Object> updateField = makeMap("name", fieldName, "type", field.get("type"), "required", true);
-    schemaDesignerAPI.updateField(configSet, updateField);
+    configSetHelper.updateField(configSet, updateField, schema);
 
-    String mutableId = schemaDesignerAPI.getMutableId(configSet);
-    ManagedIndexSchema schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
     SchemaField schemaField = schema.getField(fieldName);
     assertTrue(schemaField.isRequired());
 
     updateField = makeMap("name", fieldName, "type", field.get("type"), "required", false, "stored", false);
-    schemaDesignerAPI.updateField(configSet, updateField);
+    configSetHelper.updateField(configSet, updateField, schema);
     schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
     schemaField = schema.getField(fieldName);
     assertFalse(schemaField.isRequired());
     assertFalse(schemaField.stored());
 
     updateField = makeMap("name", fieldName, "type", field.get("type"), "required", false, "stored", false, "multiValued", true);
-    schemaDesignerAPI.updateField(configSet, updateField);
+    configSetHelper.updateField(configSet, updateField, schema);
     schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
     schemaField = schema.getField(fieldName);
     assertFalse(schemaField.isRequired());
@@ -753,7 +756,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertTrue(schemaField.multiValued());
 
     updateField = makeMap("name", fieldName, "type", "strings", "copyDest", "_text_");
-    schemaDesignerAPI.updateField(configSet, updateField);
+    configSetHelper.updateField(configSet, updateField, schema);
     schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
     schemaField = schema.getField(fieldName);
     assertTrue(schemaField.multiValued());

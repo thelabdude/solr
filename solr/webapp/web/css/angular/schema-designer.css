@@ -1003,6 +1003,64 @@ limitations under the License.
   font-weight: bold;
 }
 
+/* diff dialog */
+#content #designer div.diff
+{
+  z-index: 100;
+  position: absolute;
+  background-color: #fff;
+  border: 1px solid #f0f0f0;
+  box-shadow: 5px 5px 10px #c0c0c0;
+  -moz-box-shadow: 5px 5px 10px #c0c0c0;
+  -webkit-box-shadow: 5px 5px 10px #c0c0c0;
+  top: 31px;
+  left: 650px;
+  padding: 10px;
+  width: 570px;
+}
+
+#content #designer p.diff-text {
+  margin-top: 5px;
+  margin-bottom: 15px;
+  font-size: medium;
+  font-weight: bold;
+}
+
+#content #designer p.diff-field-name {
+  margin-top: 5px;
+  margin-bottom: 15px;
+  font-size: small;
+  font-weight: bold;
+}
+
+#content #designer li.element
+{
+  border: 1px solid #f0f0f0;
+  box-shadow: 5px 5px 10px #c0c0c0;
+  -moz-box-shadow: 5px 5px 10px #c0c0c0;
+  -webkit-box-shadow: 5px 5px 10px #c0c0c0;
+  margin-top: 5px;
+  margin-bottom: 15px;
+}
+
+#content #designer .actions .diff-buttons {
+  margin-right: 15px;
+  float: right;
+  width: 48%;
+}
+
+#content #designer .actions .diff-button {
+  width: 48%;
+}
+
+#content #designer p.old-value {
+  color: indianred;
+}
+
+#content #designer p.new-value {
+  color: green;
+}
+
 /* publish dialog */
 #content #designer .actions div.publish
 {

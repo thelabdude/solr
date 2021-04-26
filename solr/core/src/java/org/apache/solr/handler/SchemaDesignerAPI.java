@@ -44,6 +44,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.solr.api.EndPoint;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrResponse;
@@ -65,6 +68,7 @@ import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
+import org.apache.solr.common.util.Utils;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.NodeConfig;
 import org.apache.solr.core.SolrConfig;
@@ -707,7 +711,7 @@ public class SchemaDesignerAPI {
       permission = CONFIG_READ_PERM)
   @SuppressWarnings("unchecked")
   public void getSchemaDiff(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
-    final String configSet = getRequiredParam(CONFIG_SET_PARAM, req, "info");
+    final String configSet = getRequiredParam(CONFIG_SET_PARAM, req);
     boolean exists = configExists(configSet);
 
     if (exists) {
@@ -724,7 +728,7 @@ public class SchemaDesignerAPI {
   @SuppressWarnings("unchecked")
   List<SolrInputDocument> loadSampleDocsFromBlobStore(final String configSet) throws IOException {
     List<SolrInputDocument> docs = null;
-    String baseUrl = getBaseUrl(".system");
+    String baseUrl = configSetHelper.getBaseUrl(".system");
     String url = baseUrl + "/.system/blob/" + configSet + "_sample?wt=filestream";
     HttpGet httpGet = null;
     try {

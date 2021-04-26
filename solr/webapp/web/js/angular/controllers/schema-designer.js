@@ -242,6 +242,7 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
   $scope.hideAll = function () {
     delete $scope.helpId;
     $scope.showPublish = false;
+    $scope.showDiff = false;
     $scope.showNewSchema = false;
     $scope.showAddField = false;
     $scope.showAddDynamicField = false;
@@ -590,6 +591,30 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     });
   }
 
+  $scope.toggleDiff = function (event) {
+    if (event) {
+      var t = event.target || event.currentTarget;
+      var leftPos = t.getBoundingClientRect().left - 800;
+      if (leftPos < 0) leftPos = 0;
+      $('#show-diff-dialog').css({left: leftPos});
+    }
+
+    $scope.showDiff = !$scope.showDiff;
+
+    if ($scope.showDiff) {
+      var params = {
+        path: "diff",
+        configSet: $scope.currentSchema
+      };
+      SchemaDesigner.get(params, function (data) {
+        $scope.fieldsDiff = data.fields;
+        $scope.fieldTypesDiff = data.fieldTypes;
+        $scope.dynamicFieldsDiff = data.dynamicFields;
+        $scope.copyFieldsDiff = data.copyFields;
+      });
+    }
+  }
+
   $scope.togglePublish = function (event) {
     if (event) {
       var t = event.target || event.currentTarget;
@@ -602,10 +627,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     delete $scope.publishErrors;
 
     $scope.disableDesigner = "false";
-
-    if ($scope.showPublish) {
-      $scope.showDiff()
-    }
 
     if ($scope.showPublish && !$scope.newCollection) {
       $scope.newCollection = {numShards: 1, replicationFactor: 1, indexToCollection: "true"};

@@ -27,6 +27,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
@@ -767,7 +769,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertEquals(Collections.singletonList(fieldName), srcFields);
   }
 
-  @SuppressWarnings({"unchecked", "rawtypes"})
+  @SuppressWarnings({"unchecked"})
   public void testSchemaDiffEndpoint() throws Exception {
     String configSet = "testJson";
 
@@ -817,7 +819,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
 
     SolrParams solrParams = idFieldMapUpdated.toSolrParams();
     Map<String, Object> mapParams = solrParams.toMap(new HashMap<>());
-
+    mapParams.put("termVectors", Boolean.FALSE);
     reqParams.set(SCHEMA_VERSION_PARAM, rsp.getValues().toSolrParams().getInt(SCHEMA_VERSION_PARAM));
 
     ObjectMapper objectMapper = new ObjectMapper();
@@ -857,9 +859,12 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertNotNull(rsp.getValues().get("fields"));
     Map<String, Object> fieldsDiff = (Map<String, Object>) rsp.getValues().get("fields");
     assertNotNull(fieldsDiff.get("updated"));
-    List<Object> idFieldChanges = (List<Object>) ((Map<String, Object>) fieldsDiff.get("updated")).get("id");
-    assertEquals(idFieldMap, idFieldChanges.get(0));
-    assertEquals(idFieldMapUpdated, idFieldChanges.get(1));
+    Map<String, Object> mapDiff = (Map<String, Object>) fieldsDiff.get("updated");
+    assertEquals(
+        Arrays.asList(
+        ImmutableMap.of("omitTermFreqAndPositions", true, "useDocValuesAsStored", true, "docValues", true),
+        ImmutableMap.of("omitTermFreqAndPositions", false, "useDocValuesAsStored", false, "docValues", false)),
+        mapDiff.get("id"));
     assertNotNull(fieldsDiff.get("added"));
     Map<String, Object> fieldsAdded = (Map<String, Object>) fieldsDiff.get("added");
     assertNotNull(fieldsAdded.get("keywords"));
@@ -870,12 +875,6 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
     assertNotNull(fieldTypesDiff.get("added"));
     Map<String, Object> fieldTypesAdded = (Map<String, Object>) fieldTypesDiff.get("added");
     assertNotNull(fieldTypesAdded.get("test_txt"));
-  }
-
-  @SuppressWarnings("unchecked")
-  private Map<String, String> transformSimpleOrderedMapToMap(SimpleOrderedMap<Object> som) {
-    SolrParams solrParams = som.toSolrParams();
-    return solrParams.toMap(new HashMap<>());
   }
 
   @SuppressWarnings("rawtypes")

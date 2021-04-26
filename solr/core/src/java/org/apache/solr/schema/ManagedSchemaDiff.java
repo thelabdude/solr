@@ -2,12 +2,15 @@ package org.apache.solr.schema;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.google.common.collect.MapDifference;
+import com.google.common.collect.Maps;
 import org.apache.solr.common.util.SimpleOrderedMap;
 
 /**
@@ -41,7 +44,7 @@ public class ManagedSchemaDiff {
   }
 
   protected static Map<String, Object> diff(Map<String, SimpleOrderedMap<Object>> map1, Map<String, SimpleOrderedMap<Object>> map2) {
-    Map<String, List<SimpleOrderedMap<Object>>> changedValues = new HashMap<>();
+    Map<String, List<Map<String, Object>>> changedValues = new HashMap<>();
     Map<String, SimpleOrderedMap<Object>> newValues = new HashMap<>();
     Map<String, SimpleOrderedMap<Object>> removedValues = new HashMap<>();
     for (String fieldName : map1.keySet()) {
@@ -49,7 +52,7 @@ public class ManagedSchemaDiff {
         SimpleOrderedMap<Object> oldPropValues = map1.get(fieldName);
         SimpleOrderedMap<Object> newPropValues = map2.get(fieldName);
         if (!oldPropValues.equals(newPropValues)) {
-          changedValues.put(fieldName, Arrays.asList(oldPropValues, newPropValues));
+          changedValues.put(fieldName, getMapDifference(oldPropValues, newPropValues));
         }
       } else {
         removedValues.put(fieldName, map1.get(fieldName));
@@ -68,6 +71,33 @@ public class ManagedSchemaDiff {
     mapDiff.put(REMOVED_KEY_STRING, removedValues);
 
     return mapDiff;
+  }
+
+  /**
+   * TODO:
+   * @param simpleOrderedMap1 TODO
+   * @param simpleOrderedMap2 TODO
+   * @return TODO
+   */
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> getMapDifference(
+      SimpleOrderedMap<Object> simpleOrderedMap1,
+      SimpleOrderedMap<Object> simpleOrderedMap2) {
+    Map<String, Object> map1 = simpleOrderedMap1.toMap(new HashMap<>());
+    Map<String, Object> map2 = simpleOrderedMap2.toMap(new HashMap<>());
+    Map<String, MapDifference.ValueDifference<Object>> mapDiff = Maps.difference(map1, map2).entriesDiffering();
+    if (mapDiff.isEmpty()) {
+      return Collections.emptyList();
+    }
+    Map<String, Object> leftMapDiff =
+        mapDiff.entrySet().stream()
+        .map(entry -> Map.entry(entry.getKey(), entry.getValue().leftValue()))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    Map<String, Object> rightMapDiff =
+        mapDiff.entrySet().stream()
+            .map(entry -> Map.entry(entry.getKey(), entry.getValue().rightValue()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    return Arrays.asList(leftMapDiff, rightMapDiff);
   }
 
   protected static Map<String, Object> diff(List<SimpleOrderedMap<Object>> list1, List<SimpleOrderedMap<Object>> list2) {
@@ -100,7 +130,7 @@ public class ManagedSchemaDiff {
 
   protected static Map<String, SimpleOrderedMap<Object>> mapFieldTypesToPropValues(Map<String, FieldType> fieldTypes) {
     Map<String, SimpleOrderedMap<Object>> propValueMap = new HashMap<>();
-    fieldTypes.forEach((k, v) -> propValueMap.put(k, v.getNamedPropertyValues(false)));
+    fieldTypes.forEach((k, v) -> propValueMap.put(k, v.getNamedPropertyValues(true)));
     return propValueMap;
   }
 

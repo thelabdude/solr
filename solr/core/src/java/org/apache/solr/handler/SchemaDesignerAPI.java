@@ -411,7 +411,7 @@ public class SchemaDesignerAPI {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           "Invalid update request! JSON payload is missing the required name property: " + updateField);
     }
-    log.info("Updating schema object: configSet={}, mutableId={}, JSON={}", configSet, mutableId, updateField);
+    log.info("Updating schema object: configSet={}, mutableId={}, name={}, JSON={}", configSet, mutableId, name, updateField);
 
     Map<String, Object> settings = new HashMap<>();
     ManagedIndexSchema schemaBeforeUpdate = getMutableSchemaForConfigSet(configSet, -1, null, settings);

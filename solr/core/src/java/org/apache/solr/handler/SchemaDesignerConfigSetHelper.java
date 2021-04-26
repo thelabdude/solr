@@ -244,8 +244,9 @@ public class SchemaDesignerConfigSetHelper {
     String name = (String) updateJson.get("name");
     String mutableId = getMutableId(configSet);
 
-    SolrException solrExc = null;
     boolean needsRebuild = false;
+
+    SolrException solrExc = null;
     String updateType = "field";
     String updateError = null;
     if (updateJson.get("type") != null) {
@@ -260,39 +261,52 @@ public class SchemaDesignerConfigSetHelper {
       }
     } else {
       updateType = "type";
-
-      Map<String, Object> typeAttrs = updateJson.entrySet().stream()
-          .filter(e -> !removeFieldProps.contains(e.getKey()))
-          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-      FieldType fieldType = schemaBeforeUpdate.getFieldTypeByName(name);
-
-      // this is a field type
-      Object multiValued = typeAttrs.get("multiValued");
-      if (hasMultivalueChange(multiValued, fieldType)) {
-        needsRebuild = true;
-        log.warn("Re-building the temp collection for {} after type {} updated to multi-valued {}", configSet, name, multiValued);
-      }
-
-      // nice, the json for this field looks like
-      // "synonymQueryStyle": "org.apache.solr.parser.SolrQueryParserBase$SynonymQueryStyle:AS_SAME_TERM"
-      if (typeAttrs.get("synonymQueryStyle") instanceof String) {
-        String synonymQueryStyle = (String) typeAttrs.get("synonymQueryStyle");
-        if (synonymQueryStyle.lastIndexOf(':') != -1) {
-          typeAttrs.put("synonymQueryStyle", synonymQueryStyle.substring(synonymQueryStyle.lastIndexOf(':') + 1));
-        }
-      }
-
-      ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceFieldType(fieldType.getTypeName(), (String) typeAttrs.get("class"), typeAttrs);
-      if (!updatedSchema.persistManagedSchema(false)) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
-      }
+      needsRebuild = updateFieldType(configSet, name, updateJson, schemaBeforeUpdate);
     }
 
     // the update may have required a full rebuild of the index, otherwise, it's just a reload / re-index sample
     reloadTempCollection(mutableId, needsRebuild);
 
-    return makeMap("rebuild", needsRebuild, "updateType", updateType, "updateError", updateError, "solrExc", solrExc);
+    Map<String, Object> map = makeMap("rebuild", needsRebuild, "updateType", updateType);
+    if (updateError != null) {
+      map.put("updateError", updateError);
+    }
+    if (solrExc != null) {
+      map.put("solrExc", solrExc);
+    }
+    return map;
+  }
+
+  protected boolean updateFieldType(String configSet, String typeName, Map<String, Object> updateJson, ManagedIndexSchema schemaBeforeUpdate) {
+    boolean needsRebuild = false;
+
+    Map<String, Object> typeAttrs = updateJson.entrySet().stream()
+        .filter(e -> !removeFieldProps.contains(e.getKey()))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    FieldType fieldType = schemaBeforeUpdate.getFieldTypeByName(typeName);
+
+    // this is a field type
+    Object multiValued = typeAttrs.get("multiValued");
+    if (hasMultivalueChange(multiValued, fieldType)) {
+      needsRebuild = true;
+      log.warn("Re-building the temp collection for {} after type {} updated to multi-valued {}", configSet, typeName, multiValued);
+    }
+
+    // nice, the json for this field looks like
+    // "synonymQueryStyle": "org.apache.solr.parser.SolrQueryParserBase$SynonymQueryStyle:AS_SAME_TERM"
+    if (typeAttrs.get("synonymQueryStyle") instanceof String) {
+      String synonymQueryStyle = (String) typeAttrs.get("synonymQueryStyle");
+      if (synonymQueryStyle.lastIndexOf(':') != -1) {
+        typeAttrs.put("synonymQueryStyle", synonymQueryStyle.substring(synonymQueryStyle.lastIndexOf(':') + 1));
+      }
+    }
+
+    ManagedIndexSchema updatedSchema =
+        schemaBeforeUpdate.replaceFieldType(fieldType.getTypeName(), (String) typeAttrs.get("class"), typeAttrs);
+    updatedSchema.persistManagedSchema(false);
+
+    return needsRebuild;
   }
 
   boolean updateField(String configSet, Map<String, Object> updateField, ManagedIndexSchema schemaBeforeUpdate) throws IOException, SolrServerException {
@@ -308,6 +322,7 @@ public class SchemaDesignerConfigSetHelper {
     boolean needsRebuild = false;
 
     SchemaField schemaField = schemaBeforeUpdate.getField(name);
+    boolean isDynamic = schemaBeforeUpdate.isDynamicField(name);
     String currentType = schemaField.getType().getTypeName();
 
     SimpleOrderedMap<Object> fromTypeProps;
@@ -354,7 +369,7 @@ public class SchemaDesignerConfigSetHelper {
       multiValued = type.equals(currentType) ? schemaField.multiValued() : schemaBeforeUpdate.getFieldTypeByName(type).isMultiValued();
     }
 
-    if (Boolean.FALSE.equals(multiValued)) {
+    if (!isDynamic && Boolean.FALSE.equals(multiValued)) {
       // make sure there are no mv source fields if this is a copy dest
       for (String src : schemaBeforeUpdate.getCopySources(name)) {
         SchemaField srcField = schemaBeforeUpdate.getField(src);
@@ -388,13 +403,17 @@ public class SchemaDesignerConfigSetHelper {
       }
     }
 
-    log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
-    ManagedIndexSchema updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
+    ManagedIndexSchema updatedSchema;
+    if (isDynamic) {
+      log.info("For {}, replacing dynamic field {} with attributes: {}", configSet, name, diff);
+      updatedSchema = schemaBeforeUpdate.replaceDynamicField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
+    } else {
+      log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
+      updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
+    }
 
     // persist the change before applying the copy-field updates
-    if (!updatedSchema.persistManagedSchema(false)) {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
-    }
+    updatedSchema.persistManagedSchema(false);
 
     return applyCopyFieldUpdates(mutableId, copyDest, name, updatedSchema) || needsRebuild;
   }
@@ -913,7 +932,7 @@ public class SchemaDesignerConfigSetHelper {
     Path tmpDirectory = Files.createTempDirectory("schema-designer-" + configId);
     File tmpDir = tmpDirectory.toFile();
     try {
-      downloadConfig(configId, tmpDirectory);
+      cc.getConfigSetService().downloadConfig(configId, tmpDirectory);
       try (ZipOutputStream zipOut = new ZipOutputStream(baos)) {
         zipIt(tmpDir, "", zipOut);
       }
@@ -957,9 +976,5 @@ public class SchemaDesignerConfigSetHelper {
         zipOut.write(bytes, 0, r);
       }
     }
-  }
-
-  private void downloadConfig(String configName, Path dir) throws IOException {
-    cc.getConfigSetService().downloadConfig(configName, dir);
   }
 }

@@ -26,10 +26,13 @@ import java.util.Map;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
 import org.apache.solr.cloud.SolrCloudTestCase;
 import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.SolrConfig;
 import org.apache.solr.handler.loader.DefaultSampleDocumentsLoader;
+import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.ManagedIndexSchema;
+import org.apache.solr.schema.SchemaField;
 import org.apache.solr.util.ExternalPaths;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -113,6 +116,9 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
 
     schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Collections.emptyList(), true, DEFAULT_CONFIGSET_NAME);
     assertEquals(2, schema.getSchemaZkVersion());
+
+    byte[] zipped = helper.downloadAndZipConfigSet(mutableId);
+    assertTrue(zipped != null && zipped.length > 0);
   }
 
   @Test
@@ -180,13 +186,10 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     assertTrue(docs != null && docs.size() == 1);
     assertEquals("1", docs.get(0).getFieldValue("id"));
 
+    // add / update field
     Map<String, Object> addField = makeMap("name", "author", "type", "string");
     String addedFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-field", addField));
     assertEquals("author", addedFieldName);
-
-    Map<String, Object> addDynField = makeMap("name", "*_test", "type", "string");
-    String addedDynFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-dynamic-field", addDynField));
-    assertEquals("*_test", addedDynFieldName);
 
     Map<String, Object> updateField = makeMap("name", "author", "type", "string", "required", true);
     ManagedIndexSchema latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
@@ -194,5 +197,56 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     assertNotNull(resp);
     assertEquals("field", resp.get("updateType"));
     assertEquals(false, resp.get("rebuild"));
+
+    SchemaField addedField = latest.getField("author");
+    assertFalse(addedField.multiValued());
+    assertTrue(addedField.hasDocValues());
+
+    // an update that requires a full-rebuild
+    updateField = makeMap("name", "author", "type", "string", "required", true, "docValues", true, "multiValued", true, "copyDest", "_text_");
+    resp = helper.updateSchemaObject(configSet, updateField, helper.loadLatestSchema(helper.loadSolrConfig(mutableId)));
+    assertNotNull(resp);
+    assertEquals("field", resp.get("updateType"));
+    assertEquals(true, resp.get("rebuild"));
+
+    // did the copy field update get applied?
+    latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertEquals(Collections.singletonList("author"), latest.getCopySources("_text_"));
+
+    // switch the author field type to strings
+    updateField = makeMap("name", "author", "type", "strings", "docValues", true, "copyDest", "_text_");
+    resp = helper.updateSchemaObject(configSet, updateField, helper.loadLatestSchema(helper.loadSolrConfig(mutableId)));
+    assertNotNull(resp);
+    assertEquals("field", resp.get("updateType"));
+    assertEquals(false, resp.get("rebuild")); // tricky, we didn't actually change the field to multiValue (it already was)
+
+    // add / update field type
+    Map<String, Object> addType = makeMap("name", "testType", "class", "solr.StrField", "docValues", true);
+    String addTypeName = helper.addSchemaObject(configSet, Collections.singletonMap("add-field-type", addType));
+    assertEquals("testType", addTypeName);
+
+    latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    FieldType addedType = latest.getFieldTypeByName(addTypeName);
+    assertNotNull(addedType);
+    SimpleOrderedMap<Object> props = addedType.getNamedPropertyValues(false);
+    assertTrue(props.getBooleanArg("docValues"));
+    assertFalse(addedType.isMultiValued());
+
+    Map<String, Object> updateType = makeMap("name", "testType", "class", "solr.StrField", "docValues", true, "multiValued", true);
+    resp = helper.updateSchemaObject(configSet, updateType, helper.loadLatestSchema(helper.loadSolrConfig(mutableId)));
+    assertNotNull(resp);
+    assertEquals("type", resp.get("updateType"));
+    assertEquals(true, resp.get("rebuild"));
+
+    // add / update dynamic field
+    Map<String, Object> addDynField = makeMap("name", "*_test", "type", "string");
+    String addedDynFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-dynamic-field", addDynField));
+    assertEquals("*_test", addedDynFieldName);
+
+    // update the dynamic field
+    Map<String, Object> updateDynField = makeMap("name", "*_test", "type", "string", "docValues", false);
+    resp = helper.updateSchemaObject(configSet, updateDynField, helper.loadLatestSchema(helper.loadSolrConfig(mutableId)));
+    assertEquals("*_test", addedDynFieldName);
+
   }
 }

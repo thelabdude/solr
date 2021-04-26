@@ -285,8 +285,10 @@ public final class SlowCompositeReaderWrapper extends LeafReader {
   }
 
   @Override
-  public TopDocs searchNearestVectors(String field, float[] target, int k, int fanout) throws IOException {
-    throw new UnsupportedOperationException();
+  public TopDocs searchNearestVectors(String field, float[] target, int k, int fanout)
+      throws IOException {
+    ensureOpen();
+    return null; // because not supported.  Throw UOE?
   }
 
   @Override

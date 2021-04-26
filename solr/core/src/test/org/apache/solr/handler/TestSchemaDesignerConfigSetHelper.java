@@ -247,6 +247,6 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     Map<String, Object> updateDynField = makeMap("name", "*_test", "type", "string", "docValues", false);
     resp = helper.updateSchemaObject(configSet, updateDynField, helper.loadLatestSchema(helper.loadSolrConfig(mutableId)));
     assertEquals("*_test", addedDynFieldName);
-
+    assertNotNull(resp);
   }
 }

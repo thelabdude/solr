@@ -403,12 +403,11 @@ public class SchemaDesignerConfigSetHelper {
       }
     }
 
+    log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
     ManagedIndexSchema updatedSchema;
     if (isDynamic) {
-      log.info("For {}, replacing dynamic field {} with attributes: {}", configSet, name, diff);
       updatedSchema = schemaBeforeUpdate.replaceDynamicField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
     } else {
-      log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
       updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
     }
 
@@ -552,8 +551,8 @@ public class SchemaDesignerConfigSetHelper {
     }
     if (!toDelete.isEmpty()) {
       schema = schema.deleteFields(toDelete);
-      if (persist && !schema.persistManagedSchema(false)) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
+      if (persist) {
+        schema.persistManagedSchema(false);
       }
     }
     return schema;
@@ -688,9 +687,7 @@ public class SchemaDesignerConfigSetHelper {
     // now restore any missing types / files for the languages we need, optionally adding back dynamic fields too
     schema = restoreLanguageSpecificObjectsAndFiles(configSet, schema, langs, dynamicEnabled, copyFrom);
 
-    if (!schema.persistManagedSchema(false)) {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + configSet);
-    }
+    schema.persistManagedSchema(false);
     return schema;
   }
 

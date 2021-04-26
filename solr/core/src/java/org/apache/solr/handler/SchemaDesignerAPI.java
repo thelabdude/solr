@@ -604,9 +604,7 @@ public class SchemaDesignerAPI {
     }
 
     // persist the updated schema
-    if (!schema.persistManagedSchema(false)) {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
-    }
+    schema.persistManagedSchema(false);
 
     Boolean enableFieldGuessing = req.getParams().getBool(ENABLE_FIELD_GUESSING_PARAM);
     if (enableFieldGuessing != null) {
@@ -842,9 +840,7 @@ public class SchemaDesignerAPI {
         schema = configSetHelper.removeDynamicFields(schema);
       }
 
-      if (!schema.persistManagedSchema(false)) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist temp schema: " + mutableId);
-      }
+      schema.persistManagedSchema(false);
     }
 
     settings.putAll(info); // optimization ~ return to the caller so we don't have to re-read the SolrConfig

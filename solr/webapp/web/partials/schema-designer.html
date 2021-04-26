@@ -333,9 +333,7 @@ limitations under the License.
           </ul>
           <div ng-show="collectionsForConfig.length == 0" class="clearfix">No existing collections</div>
         </div>
-
         <button class="action diff-button" ng-show="collectionsForConfig.length > 0" ng-click="toggleDiff($event)"><span>Schema Diff</span></button>
-
         <div id="reload-form">
         <div class="field-form" ng-show="collectionsForConfig.length > 0">
           <input type="checkbox" ng-model="reloadOnPublish" id="reload_on_publish" title="reload affected collections" ng-true-value="'true'" ng-false-value="'false'"/>

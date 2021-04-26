@@ -393,12 +393,13 @@ public class SchemaDesignerAPI {
     Map<String, Object> addJson = readJsonFromRequest(req);
     log.info("Adding new schema object from JSON: {}", addJson);
 
-    String objectName = configSetHelper.addSchemaObject(mutableId, addJson);
+    String objectName = configSetHelper.addSchemaObject(configSet, addJson);
+    String action = addJson.keySet().iterator().next();
 
     Map<String, Object> settings = new HashMap<>();
     ManagedIndexSchema schema = loadLatestSchema(mutableId, settings);
     Map<String, Object> response = buildResponse(configSet, schema, settings, configSetHelper.loadSampleDocsFromBlobStore(configSet));
-    response.put(addJson.keySet().iterator().next(), objectName);
+    response.put(action, objectName);
     rsp.getValues().addAll(response);
   }
 
@@ -723,33 +724,6 @@ public class SchemaDesignerAPI {
 
       rsp.getValues().addAll(diff);
     }
-  }
-
-  @SuppressWarnings("unchecked")
-  List<SolrInputDocument> loadSampleDocsFromBlobStore(final String configSet) throws IOException {
-    List<SolrInputDocument> docs = null;
-    String baseUrl = configSetHelper.getBaseUrl(".system");
-    String url = baseUrl + "/.system/blob/" + configSet + "_sample?wt=filestream";
-    HttpGet httpGet = null;
-    try {
-      httpGet = new HttpGet(url);
-      HttpResponse entity = cloudClient().getHttpClient().execute(httpGet);
-      int statusCode = entity.getStatusLine().getStatusCode();
-      if (statusCode == HttpStatus.SC_OK) {
-        byte[] bytes = streamAsBytes(entity.getEntity().getContent());
-        if (bytes.length > 0) {
-          docs = (List<SolrInputDocument>) Utils.fromJavabin(bytes);
-        }
-      } else if (statusCode != HttpStatus.SC_NOT_FOUND) {
-        byte[] bytes = streamAsBytes(entity.getEntity().getContent());
-        throw new IOException("Failed to lookup stored docs for " + configSet + " due to: " + new String(bytes, StandardCharsets.UTF_8));
-      } // else not found is ok
-    } finally {
-      if (httpGet != null) {
-        httpGet.releaseConnection();
-      }
-    }
-    return docs != null ? docs : Collections.emptyList();
   }
 
   private byte[] streamAsBytes(final InputStream in) throws IOException {
@@ -1126,6 +1100,10 @@ public class SchemaDesignerAPI {
                                     Map<Object, Throwable> errorsDuringIndexing,
                                     Map<String, Object> response,
                                     String updateError) {
+    if (solrExc == null && (errorsDuringIndexing == null || errorsDuringIndexing.isEmpty())) {
+      return; // no errors
+    }
+
     if (updateError != null) {
       response.put(UPDATE_ERROR, updateError);
     }

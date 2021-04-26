@@ -412,7 +412,7 @@ public class SchemaDesignerAPI {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           "Invalid update request! JSON payload is missing the required name property: " + updateField);
     }
-    log.info("Updating schema object: configSet={}, mutableId={}, JSON={}", configSet, mutableId, updateField);
+    log.info("Updating schema object: configSet={}, mutableId={}, name={}, JSON={}", configSet, mutableId, name, updateField);
 
     Map<String, Object> settings = new HashMap<>();
     ManagedIndexSchema schemaBeforeUpdate = getMutableSchemaForConfigSet(configSet, -1, null, settings);
@@ -605,9 +605,7 @@ public class SchemaDesignerAPI {
     }
 
     // persist the updated schema
-    if (!schema.persistManagedSchema(false)) {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist schema: " + mutableId);
-    }
+    schema.persistManagedSchema(false);
 
     Boolean enableFieldGuessing = req.getParams().getBool(ENABLE_FIELD_GUESSING_PARAM);
     if (enableFieldGuessing != null) {
@@ -866,9 +864,7 @@ public class SchemaDesignerAPI {
         schema = configSetHelper.removeDynamicFields(schema);
       }
 
-      if (!schema.persistManagedSchema(false)) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to persist temp schema: " + mutableId);
-      }
+      schema.persistManagedSchema(false);
     }
 
     settings.putAll(info); // optimization ~ return to the caller so we don't have to re-read the SolrConfig

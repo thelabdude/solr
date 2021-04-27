@@ -228,13 +228,18 @@ limitations under the License.
         <div id="fields-diff" ng-hide="fieldsDiff == null" ng-show="Object.keys(fieldsDiff).length > 0">
           <div id="fields-updated" ng-show="Object.keys(fieldsDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Fields</p>
-            <ul>
-              <li class="clearfix element" ng-repeat="(field, fieldDiff) in fieldsDiff.updated">
-                <p class="clearfix diff-field-name">Name: {{ field }}</p>
-                <p class="old-value">{{fieldDiff[0] | json}}</p>
-                <p class="new-value">{{fieldDiff[1] | json}}</p>
-              </li>
-            </ul>
+            <table class="diff">
+              <tr>
+                <th>Name</th>
+                <th>Old</th>
+                <th>New</th>
+              </tr>
+              <tr ng-repeat="(field, fieldDiff) in fieldsDiff.updated">
+                <td>{{ field }}</td>
+                <td><p class="old-value">{{fieldDiff[0] | json}}</p></td>
+                <td><p class="new-value">{{fieldDiff[1] | json}}</p></td>
+              </tr>
+            </table>
           </div>
           <div id="fields-added" ng-show="Object.keys(fieldsDiff.added).length > 0">
             <p class="clearfix diff-text">New Fields</p>
@@ -256,13 +261,18 @@ limitations under the License.
         <div id="fieldtypes-diff" ng-hide="fieldTypesDiff == null" ng-show="Object.keys(fieldTypesDiff).length > 0">
           <div id="fieldtypes-updated" ng-show="Object.keys(fieldTypesDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Field Types</p>
-            <ul>
-              <li class="clearfix element" ng-repeat="(fieldType, fieldTypeDiff) in fieldTypesDiff.updated">
-                <p class="clearfix diff-field-name">Name: {{ fieldType }}</p>
-                <p class="old-value">{{fieldTypeDiff[0] | json}}</p>
-                <p class="new-value">{{fieldTypeDiff[1] | json}}</p>
-              </li>
-            </ul>
+            <table class="diff">
+              <tr>
+                <th>Name</th>
+                <th>Old</th>
+                <th>New</th>
+              </tr>
+              <tr ng-repeat="(fieldType, fieldTypeDiff) in fieldTypesDiff.updated">
+                <td>{{ fieldType }}</td>
+                <td><p class="old-value">{{fieldTypeDiff[0] | json}}</p></td>
+                <td><p class="new-value">{{fieldTypeDiff[1] | json}}</p></td>
+              </tr>
+            </table>
           </div>
           <div id="fieldtypes-added" ng-show="Object.keys(fieldTypesDiff.added).length > 0">
             <p class="clearfix diff-text">New Field Types</p>
@@ -284,12 +294,18 @@ limitations under the License.
         <div id="dynamicfields-diff" ng-hide="dynamicFieldsDiff == null" ng-show="Object.keys(dynamicFieldsDiff).length > 0">
           <div id="dynamicfields-updated" ng-show="Object.keys(dynamicFieldsDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Dynamic Fields</p>
-              <li class="clearfix element" ng-repeat="(dfield, dfieldDiff) in dynamicFieldsDiff.updated">
-                <p class="clearfix diff-field-name">Name: {{ dfield }}</p>
-                <p class="old-value">{{dfieldDiff[0] | json}}</p>
-                <p class="new-value">{{dfieldDiff[1] | json}}</p>
-              </li>
-            </ul>
+            <table class="diff">
+              <tr>
+                <th>Name</th>
+                <th>Old</th>
+                <th>New</th>
+              </tr>
+              <tr ng-repeat="(dfield, dfieldDiff) in dynamicFieldsDiff.updated">
+                <td>{{ dfield }}</td>
+                <td><p class="old-value">{{dfieldDiff[0] | json}}</p></td>
+                <td><p class="new-value">{{dfieldDiff[1] | json}}</p></td>
+              </tr>
+            </table>
           </div>
           <div id="dynamicfields-added" ng-show="Object.keys(dynamicFieldsDiff.added).length > 0">
             <p class="clearfix diff-text">New Dynamic Fields</p>
@@ -309,14 +325,21 @@ limitations under the License.
           </div>
         </div>
         <div id="copyfields-diff" ng-hide="copyFieldsDiff == null" ng-show="Object.keys(copyFieldsDiff).length > 0">
-          <ul>
-            <li class="clearfix element" ng-show="copyFieldsDiff.old.length > 0" ng-repeat="cfield in copyFieldsDiff.old">
-              <p class="old-value">{{cfield | json}}</p>
-            </li>
-            <li class="clearfix element" ng-show="copyFieldsDiff.old.length > 0" ng-repeat="cfield in copyFieldsDiff.new">
-              <p class="new-value">{{cfield | json}}</p>
-            </li>
-          </ul>
+          <p class="clearfix diff-text">Copy Fields</p>
+          <table class="diff">
+            <tr>
+              <th>Source</th>
+              <th>Destination</th>
+            </tr>
+            <tr ng-show="copyFieldsDiff.old.length > 0" ng-repeat="cfield in copyFieldsDiff.old">
+              <td><p class="old-value">{{cfield.source}}</p></td>
+              <td><p class="old-value">{{cfield.dest}}</p></td>
+            </tr>
+            <tr ng-show="copyFieldsDiff.new.length > 0" ng-repeat="cfield in copyFieldsDiff.new">
+              <td><p class="new-value">{{cfield.source}}</p></td>
+              <td><p class="new-value">{{cfield.dest}}</p></td>
+            </tr>
+          </table>
         </div>
 
         <div class="clearfix diff-buttons">

@@ -13,13 +13,15 @@ public class ManagedSchemaDiffTest extends SolrTestCaseJ4 {
 
   public void testFieldDiff() {
     Map<String, SchemaField> schema1FieldMap = new HashMap<>();
-    schema1FieldMap.put("strfield", new SchemaField("strfield", new StrField()));
+    StrField strFieldType1 = new StrField();
+    strFieldType1.setTypeName("string");
+    schema1FieldMap.put("strfield", new SchemaField("strfield", strFieldType1));
     schema1FieldMap.put("boolfield", new SchemaField("boolfield", new BoolField()));
 
     Map<String, SchemaField> schema2FieldMap = new HashMap<>();
-    StrField strFieldType = new StrField();
-    strFieldType.setTypeName("strings");
-    schema2FieldMap.put("strfield", new SchemaField("strfield", strFieldType));
+    StrField strFieldType2 = new StrField();
+    strFieldType2.setTypeName("strings");
+    schema2FieldMap.put("strfield", new SchemaField("strfield", strFieldType2));
     schema2FieldMap.put("intfield", new SchemaField("intfield", new IntPointField()));
 
     Map<String, Object> diff = diff(mapFieldsToPropertyValues(schema1FieldMap), mapFieldsToPropertyValues(schema2FieldMap));
@@ -31,18 +33,18 @@ public class ManagedSchemaDiffTest extends SolrTestCaseJ4 {
     Assert.assertEquals(1, changedFields.size());
     Assert.assertTrue(changedFields.containsKey("strfield"));
     Assert.assertEquals(
-        Arrays.asList(schema1FieldMap.get("strfield").getNamedPropertyValues(false), schema2FieldMap.get("strfield").getNamedPropertyValues(false)),
+        Arrays.asList(Map.of("type", "string"), Map.of("type", "strings")),
         changedFields.get("strfield"));
 
     Map<String, Object> addedFields = getInnerMap(diff, "added");
     Assert.assertEquals(1, addedFields.size());
     Assert.assertTrue(addedFields.containsKey("intfield"));
-    Assert.assertEquals(schema2FieldMap.get("intfield").getNamedPropertyValues(false), addedFields.get("intfield"));
+    Assert.assertEquals(schema2FieldMap.get("intfield").getNamedPropertyValues(true), addedFields.get("intfield"));
 
     Map<String, Object> removedFields = getInnerMap(diff, "removed");
     Assert.assertEquals(1, removedFields.size());
     Assert.assertTrue(removedFields.containsKey("boolfield"));
-    Assert.assertEquals(schema1FieldMap.get("boolfield").getNamedPropertyValues(false), removedFields.get("boolfield"));
+    Assert.assertEquals(schema1FieldMap.get("boolfield").getNamedPropertyValues(true), removedFields.get("boolfield"));
   }
 
   public void testSimpleOrderedMapListDiff() {

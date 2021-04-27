@@ -1017,6 +1017,29 @@ limitations under the License.
   left: 650px;
   padding: 10px;
   width: 570px;
+  height: 600px;
+  overflow: auto;
+}
+
+#content #designer table.diff {
+  font-family: arial, sans-serif;
+  border-collapse: collapse;
+  width: 100%;
+  display: inline-block;
+  overflow: auto;
+}
+
+#content #designer th {
+  border: 1px solid #dddddd;
+  padding: 8px;
+  font-weight: bold;
+  text-align: center;
+}
+
+#content #designer td {
+  border: 1px solid #dddddd;
+  text-align: left;
+  padding: 8px;
 }
 
 #content #designer p.diff-text {

@@ -1,5 +1,6 @@
 package org.apache.solr.schema;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -12,11 +13,15 @@ import java.util.stream.Stream;
 import com.google.common.collect.MapDifference;
 import com.google.common.collect.Maps;
 import org.apache.solr.common.util.SimpleOrderedMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Utility methods for comparing managed index schemas
  */
 public class ManagedSchemaDiff {
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private static final String UPDATED_KEY_STRING = "updated";
   private static final String ADDED_KEY_STRING = "added";
@@ -52,7 +57,10 @@ public class ManagedSchemaDiff {
         SimpleOrderedMap<Object> oldPropValues = map1.get(fieldName);
         SimpleOrderedMap<Object> newPropValues = map2.get(fieldName);
         if (!oldPropValues.equals(newPropValues)) {
-          changedValues.put(fieldName, getMapDifference(oldPropValues, newPropValues));
+          List<Map<String, Object>> mapDiff = getMapDifference(oldPropValues, newPropValues);
+          if (!mapDiff.isEmpty()) {
+            changedValues.put(fieldName, mapDiff);
+          }
         }
       } else {
         removedValues.put(fieldName, map1.get(fieldName));
@@ -137,7 +145,7 @@ public class ManagedSchemaDiff {
   protected static Map<String, SimpleOrderedMap<Object>> mapDynamicFieldToPropValues(IndexSchema.DynamicField[] dynamicFields) {
     return
         Stream.of(dynamicFields)
-            .map(df -> Map.entry(df.getPrototype().getName(), df.getPrototype().getNamedPropertyValues(false)))
+            .map(df -> Map.entry(df.getPrototype().getName(), df.getPrototype().getNamedPropertyValues(true)))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 

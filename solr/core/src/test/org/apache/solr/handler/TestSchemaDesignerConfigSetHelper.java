@@ -141,6 +141,24 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase impleme
     schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Arrays.asList("en", "fr"), true, DEFAULT_CONFIGSET_NAME);
     assertNotNull(schema.getFieldTypeByName("text_en"));
     assertNotNull(schema.getFieldOrNull("*_txt_en"));
+    assertTrue(cluster.getZkClient().exists(SchemaDesignerAPI.getConfigSetZkPath(mutableId, "lang/stopwords_en.txt"), true));
+    assertNotNull(schema.getFieldTypeByName("text_fr"));
+    assertNotNull(schema.getFieldOrNull("*_txt_fr"));
+    assertNull(schema.getFieldOrNull("*_txt_ga"));
+
+    // add a field that uses text_en and then try removing "en" from the lang set
+    helper.createCollection(mutableId, mutableId); // need to create field
+    Map<String, Object> addField = makeMap("name", "title", "type", "text_en");
+    String addedFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-field", addField));
+    assertEquals("title", addedFieldName);
+
+    schema = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertNotNull(schema.getField("title"));
+
+    schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Collections.singletonList("fr"), true, DEFAULT_CONFIGSET_NAME);
+    assertNotNull(schema.getFieldTypeByName("text_en")); // being used, so not removed
+    assertNotNull(schema.getFieldOrNull("*_txt_en"));
+    assertTrue(cluster.getZkClient().exists(SchemaDesignerAPI.getConfigSetZkPath(mutableId, "lang/stopwords_en.txt"), true));
     assertNotNull(schema.getFieldTypeByName("text_fr"));
     assertNotNull(schema.getFieldOrNull("*_txt_fr"));
     assertNull(schema.getFieldOrNull("*_txt_ga"));
@@ -152,6 +170,14 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase impleme
     assertNotNull(schema.getFieldOrNull("*_txt_fr"));
     assertNotNull(schema.getFieldTypeByName("text_ga"));
     assertNotNull(schema.getFieldOrNull("*_txt_ga"));
+
+    schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Collections.emptyList(), false, DEFAULT_CONFIGSET_NAME);
+    assertNotNull(schema.getFieldTypeByName("text_en"));
+    assertNull(schema.getFieldOrNull("*_txt_en"));
+    assertNotNull(schema.getFieldTypeByName("text_fr"));
+    assertNull(schema.getFieldOrNull("*_txt_fr"));
+    assertNotNull(schema.getFieldTypeByName("text_ga"));
+    assertNull(schema.getFieldOrNull("*_txt_ga"));
 
     schema = helper.toggleNestedDocsFields(schema, true);
     assertTrue(schema.hasExplicitField(ROOT_FIELD_NAME));

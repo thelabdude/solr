@@ -114,6 +114,8 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
   private static final List<String> includeLangIds = Arrays.asList("ws", "general", "rev", "sort");
   private static final String ZNODE_PATH_DELIM = "/";
   private static final String MULTIVALUED = "multiValued";
+  private static final int TEXT_PREFIX_LEN = "text_".length();
+
 
   private final CoreContainer cc;
   private final SchemaSuggester schemaSuggester;
@@ -222,6 +224,7 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Unsupported action in request body! " + addJson);
     }
 
+    // Using the SchemaAPI vs. working on the schema directly because SchemaField.create methods are package protected
     SchemaResponse.UpdateResponse schemaResponse = addAction.process(cloudClient(), mutableId);
     if (schemaResponse.getStatus() != 0) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, schemaResponse.getException());
@@ -721,11 +724,20 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
     final Set<String> languages = new HashSet<>(includeLangIds);
     languages.addAll(langs);
 
-    final Set<String> usedTypes = schema.getFields().values().stream().map(f -> f.getType().getTypeName()).collect(Collectors.toSet());
+    final Set<String> usedTypes =
+        schema.getFields().values().stream().map(f -> f.getType().getTypeName()).collect(Collectors.toSet());
+
+    final Set<String> usedLangs =
+        schema.getFields().values().stream().filter(f -> isTextType(f.getType()))
+            .map(f -> f.getType().getTypeName().substring(TEXT_PREFIX_LEN)).collect(Collectors.toSet());
+
+    // don't remove types / files for langs that are explicitly being used by a field
+    languages.addAll(usedLangs);
+
     Map<String, FieldType> types = schema.getFieldTypes();
     final Set<String> toRemove = types.values().stream()
-        .filter(t -> t.getTypeName().startsWith("text_") && TextField.class.equals(t.getClass()))
-        .filter(t -> !languages.contains(t.getTypeName().substring("text_".length())))
+        .filter(this::isTextType)
+        .filter(t -> !languages.contains(t.getTypeName().substring(TEXT_PREFIX_LEN)))
         .map(FieldType::getTypeName)
         .filter(t -> !usedTypes.contains(t)) // not explicitly used by a field
         .collect(Collectors.toSet());
@@ -745,23 +757,7 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
     final Set<String> langExt = languages.stream().map(l -> "_" + l).collect(Collectors.toSet());
     try {
       ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, path -> {
-        if (path.endsWith(".txt")) {
-          int slashAt = path.lastIndexOf('/');
-          String fileName = slashAt != -1 ? path.substring(slashAt + 1) : "";
-          if (!fileName.contains("_")) return; // not a match
-
-          final String pathWoExt = fileName.substring(0, fileName.length() - 4);
-          boolean matchesLang = false;
-          for (String lang : langExt) {
-            if (pathWoExt.endsWith(lang)) {
-              matchesLang = true;
-              break;
-            }
-          }
-          if (!matchesLang) {
-            toRemoveFiles.add(path);
-          }
-        }
+        if (!isMatchingLangOrNonLangFile(path, langExt)) toRemoveFiles.add(path);
       });
     } catch (KeeperException.NoNodeException nne) {
       // no-op
@@ -833,8 +829,7 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
     // Restore field types
     final Map<String, FieldType> existingTypes = schema.getFieldTypes();
     List<FieldType> addTypes = copyFromSchema.getFieldTypes().values().stream()
-        .filter(t -> isLangTextType(t, restoreAllLangs, langSet))
-        .filter(t -> !existingTypes.containsKey(t.getTypeName()))
+        .filter(t -> isLangTextType(t, restoreAllLangs ? null : langSet) && !existingTypes.containsKey(t.getTypeName()))
         .collect(Collectors.toList());
     if (!addTypes.isEmpty()) {
       schema = schema.addFieldTypes(addTypes, false);
@@ -847,7 +842,7 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
           .collect(Collectors.toSet());
 
       final Set<String> langFieldTypeNames = schema.getFieldTypes().values().stream()
-          .filter(t -> isLangTextType(t, restoreAllLangs, langSet))
+          .filter(t -> isLangTextType(t, restoreAllLangs ? null : langSet))
           .map(FieldType::getTypeName)
           .collect(Collectors.toSet());
 
@@ -866,10 +861,33 @@ public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
     return schema;
   }
 
-  private boolean isLangTextType(final FieldType t, final boolean restoreAllLangs, final Set<String> langSet) {
-    return t.getTypeName().startsWith("text_") &&
-        TextField.class.equals(t.getClass()) &&
-        (restoreAllLangs || langSet.contains(t.getTypeName().substring("text_".length())));
+  private boolean isMatchingLangOrNonLangFile(final String path, final Set<String> langs) {
+    if (!path.endsWith(".txt"))
+      return true; // not a .txt file, always include
+
+    int slashAt = path.lastIndexOf('/');
+    String fileName = slashAt != -1 ? path.substring(slashAt + 1) : "";
+    if (!fileName.contains("_"))
+      return true; // looking for file names like stopwords_en.txt, not a match, so skip it
+
+    // remove the .txt extension
+    final String pathWoExt = fileName.substring(0, fileName.length() - 4);
+    for (String lang : langs) {
+      if (pathWoExt.endsWith(lang)) {
+        return true;
+      }
+    }
+
+    // if we fall thru to here, then the file should be excluded
+    return false;
+  }
+
+  private boolean isTextType(final FieldType t) {
+    return t.getTypeName().startsWith("text_") && TextField.class.equals(t.getClass());
+  }
+
+  private boolean isLangTextType(final FieldType t, final Set<String> langSet) {
+    return isTextType(t) && (langSet == null || langSet.contains(t.getTypeName().substring("text_".length())));
   }
 
   protected ManagedIndexSchema removeDynamicFields(ManagedIndexSchema schema) {

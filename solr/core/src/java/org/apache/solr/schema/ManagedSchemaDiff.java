@@ -54,6 +54,7 @@ public class ManagedSchemaDiff {
    *       "old": [...]
    *     }
    *   }
+   *   }
    * </pre>
    * @param oldSchema instance of {@link ManagedIndexSchema}
    * @param newSchema instance of {@link ManagedIndexSchema}

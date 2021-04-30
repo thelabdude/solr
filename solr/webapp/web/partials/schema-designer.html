@@ -225,10 +225,10 @@ limitations under the License.
       </div>
 
       <div id="show-diff-dialog" class="diff" ng-show="showDiff && showPublish">
-        <div ng-hide="fieldsDiff != null || fieldTypesDiff != null || dynamicFieldsDiff != null || copyFieldsDiff != null"
-             ng-show="Object.keys(fieldsDiff).length > 0 && Object.keys(fieldTypesDiff).length > 0 && Object.keys(dynamicFieldsDiff).length > 0 && Object.keys(copyFieldsDiff).length > 0">
+        <div ng-hide="schemaDiffExists" ng-show="!schemaDiffExists">
           <p class="clearfix diff-text">No diff to show</p>
         </div>
+        {{fieldsDiff=schemaDiff.fieldsDiff;""}}
         <div id="fields-diff" ng-hide="fieldsDiff == null" ng-show="Object.keys(fieldsDiff).length > 0">
           <div id="fields-updated" ng-hide="fieldsDiff.updated == null" ng-show="Object.keys(fieldsDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Fields</p>
@@ -262,6 +262,7 @@ limitations under the License.
             </ul>
           </div>
         </div>
+        {{fieldTypesDiff=schemaDiff.fieldTypesDiff;""}}
         <div id="fieldtypes-diff" ng-hide="fieldTypesDiff == null" ng-show="Object.keys(fieldTypesDiff).length > 0">
           <div id="fieldtypes-updated" ng-hide="fieldTypesDiff.updated == null" ng-show="Object.keys(fieldTypesDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Field Types</p>
@@ -295,6 +296,7 @@ limitations under the License.
             </ul>
           </div>
         </div>
+        {{dynamicFieldsDiff=schemaDiff.dynamicFieldsDiff;""}}
         <div id="dynamicfields-diff" ng-hide="dynamicFieldsDiff == null" ng-show="Object.keys(dynamicFieldsDiff).length > 0">
           <div id="dynamicfields-updated" ng-hide="dynamicFieldsDiff.updated == null" ng-show="Object.keys(dynamicFieldsDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Dynamic Fields</p>
@@ -328,6 +330,7 @@ limitations under the License.
             </ul>
           </div>
         </div>
+        {{copyFieldsDiff=schemaDiff.copyFieldsDiff;""}}
         <div id="copyfields-diff" ng-hide="copyFieldsDiff == null" ng-show="Object.keys(copyFieldsDiff).length > 0">
           <p class="clearfix diff-text">Copy Fields</p>
           <table class="diff" ng-show="copyFieldsDiff.old.length > 0 || copyFieldsDiff.new.length > 0">

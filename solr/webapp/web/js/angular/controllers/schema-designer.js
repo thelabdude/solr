@@ -578,19 +578,6 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
     }, $scope.errorHandler);
   }
 
-  $scope.showDiff = function () {
-    var params = {
-      path: "diff",
-      configSet: $scope.currentSchema
-    };
-    SchemaDesigner.get(params, function (data) {
-      $scope.fieldsDiff = data.fields;
-      $scope.fieldTypesDiff = data.fieldTypes;
-      $scope.dynamicFieldsDiff = data.dynamicFields;
-      $scope.copyFieldsDiff = data.copyFields;
-    });
-  }
-
   $scope.toggleDiff = function (event) {
     if (event) {
       var t = event.target || event.currentTarget;
@@ -607,10 +594,20 @@ solrAdminApp.controller('SchemaDesignerController', function ($scope, $timeout, 
         configSet: $scope.currentSchema
       };
       SchemaDesigner.get(params, function (data) {
-        $scope.fieldsDiff = data.fields;
-        $scope.fieldTypesDiff = data.fieldTypes;
-        $scope.dynamicFieldsDiff = data.dynamicFields;
-        $scope.copyFieldsDiff = data.copyFields;
+        $scope.schemaDiff = {
+          "fieldsDiff": data.fields,
+          "fieldTypesDiff": data.fieldTypes,
+          "dynamicFieldsDiff": data.dynamicFields,
+          "copyFieldsDiff": data.copyFields
+        }
+        if (data.fields == null &&
+          data.fieldTypes == null &&
+          data.dynamicFields == null &&
+          data.copyFields == null) {
+          $scope.schemaDiffExists = false;
+        } else {
+          $scope.schemaDiffExists = true;
+        }
       });
     }
   }

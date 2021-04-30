@@ -1078,6 +1078,7 @@ limitations under the License.
 
 #content #designer p.old-value {
   color: indianred;
+  text-decoration: line-through;
 }
 
 #content #designer p.new-value {

@@ -39,17 +39,9 @@ import org.noggit.ObjectBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.apache.solr.handler.SchemaDesignerAPI.AUTO_CREATE_FIELDS;
-import static org.apache.solr.handler.SchemaDesignerAPI.CONFIGOVERLAY_JSON;
-import static org.apache.solr.handler.SchemaDesignerAPI.DESIGNER_KEY;
-import static org.apache.solr.handler.SchemaDesignerAPI.DISABLED;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_DYNAMIC_FIELDS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_NESTED_DOCS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.LANGUAGES_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.SOLR_CONFIG_XML;
 import static org.apache.solr.handler.SchemaDesignerAPI.getConfigSetZkPath;
 
-public class SchemaDesignerSettingsDAO {
+public class SchemaDesignerSettingsDAO implements SchemaDesignerConstants {
 
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
@@ -61,16 +53,15 @@ public class SchemaDesignerSettingsDAO {
     this.zkController = zkController;
   }
 
-  Map<String, Object> getSettings(String configSet) {
-    ZkSolrResourceLoader zkLoader =
-        new ZkSolrResourceLoader(resourceLoader.getInstancePath(), configSet, resourceLoader.getClassLoader(), zkController);
+  SchemaDesignerSettings getSettings(String configSet) {
+    ZkSolrResourceLoader zkLoader = new ZkSolrResourceLoader(resourceLoader.getInstancePath(), configSet, resourceLoader.getClassLoader(), zkController);
     return getSettings(SolrConfig.readFromResourceLoader(zkLoader, SOLR_CONFIG_XML, true, null));
   }
 
-  Map<String, Object> getSettings(SolrConfig solrConfig) {
+  SchemaDesignerSettings getSettings(SolrConfig solrConfig) {
     Map<String, Object> map = new HashMap<>();
-    boolean isFieldGuessingEnabled = true;
 
+    boolean isFieldGuessingEnabled = true;
     if (solrConfig != null) {
       ConfigOverlay overlay = solrConfig.getOverlay();
       Map<String, Object> userProps = overlay != null ? overlay.getUserProps() : null;
@@ -85,22 +76,19 @@ public class SchemaDesignerSettingsDAO {
     map.putIfAbsent(DESIGNER_KEY + ENABLE_DYNAMIC_FIELDS_PARAM, true);
     map.putIfAbsent(DESIGNER_KEY + ENABLE_NESTED_DOCS_PARAM, false);
 
-    return map;
+    return new SchemaDesignerSettings(map);
   }
 
-  boolean persistIfChanged(String configSet, Map<String, Object> settings) throws IOException, KeeperException, InterruptedException {
-    ConfigOverlay overlay = getConfigOverlay(configSet);
-
-    // Get what's stored in ZK
+  boolean persistIfChanged(String configSet, SchemaDesignerSettings settings) throws IOException, KeeperException, InterruptedException {
     boolean changed = false;
+
+    ConfigOverlay overlay = getConfigOverlay(configSet);
     Map<String, Object> storedUserProps = overlay != null ? overlay.getUserProps() : Collections.emptyMap();
-    for (String prop : settings.keySet()) {
-      Object propValue = settings.get(prop);
-      if (!propValue.equals(storedUserProps.get(prop))) {
-        if (overlay == null) {
-          overlay = new ConfigOverlay(null, -1);
-        }
-        overlay = overlay.setUserProperty(prop, propValue);
+    for (Map.Entry<String, Object> e : settings.toMap().entrySet()) {
+      Object propValue = e.getValue();
+      if (propValue != null && !propValue.equals(storedUserProps.get(e.getKey()))) {
+        if (overlay == null) overlay = new ConfigOverlay(null, -1);
+        overlay = overlay.setUserProperty(e.getKey(), propValue);
         changed = true;
       }
     }

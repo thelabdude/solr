@@ -24,5 +24,5 @@ import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.util.plugin.NamedListInitializedPlugin;
 
 public interface SampleDocumentsLoader extends NamedListInitializedPlugin {
-  SampleDocuments load(SolrParams params, ContentStream stream, int maxDocsToLoad) throws IOException;
+  SampleDocuments parseDocsFromStream(SolrParams params, ContentStream stream, int maxDocsToLoad) throws IOException;
 }

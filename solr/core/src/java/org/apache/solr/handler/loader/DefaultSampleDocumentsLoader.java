@@ -76,7 +76,7 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
   }
 
   @Override
-  public SampleDocuments load(SolrParams params, ContentStream stream, final int maxDocsToLoad) throws IOException {
+  public SampleDocuments parseDocsFromStream(SolrParams params, ContentStream stream, final int maxDocsToLoad) throws IOException {
     final String contentType = stream.getContentType();
     if (contentType == null) {
       return SampleDocuments.NONE;
@@ -219,6 +219,8 @@ public class DefaultSampleDocumentsLoader implements SampleDocumentsLoader {
     List<SolrInputDocument> docs;
     if (xmlString.contains("<add>") && xmlString.contains("<doc>")) {
       XMLInputFactory inputFactory = XMLInputFactory.newInstance();
+      inputFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+      inputFactory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
       XMLStreamReader parser = null;
       try {
         parser = inputFactory.createXMLStreamReader(new StringReader(xmlString));

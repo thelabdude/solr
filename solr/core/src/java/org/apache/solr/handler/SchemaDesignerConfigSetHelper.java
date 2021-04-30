@@ -22,7 +22,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
-import java.net.URLEncoder;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,11 +46,13 @@ import java.util.zip.ZipOutputStream;
 
 import com.google.common.collect.Sets;
 import org.apache.commons.io.FileUtils;
-import org.apache.http.HttpEntity;
+import org.apache.commons.io.FilenameUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.util.EntityUtils;
 import org.apache.solr.client.solrj.SolrResponse;
@@ -70,6 +73,7 @@ import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.cloud.UrlScheme;
 import org.apache.solr.common.cloud.ZkMaintenanceUtils;
 import org.apache.solr.common.cloud.ZkStateReader;
+import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.Utils;
@@ -94,52 +98,68 @@ import org.slf4j.LoggerFactory;
 
 import static org.apache.solr.common.util.Utils.fromJSONString;
 import static org.apache.solr.common.util.Utils.makeMap;
-import static org.apache.solr.handler.SchemaDesignerAPI.DESIGNER_PREFIX;
-import static org.apache.solr.handler.SchemaDesignerAPI.SOLR_CONFIG_XML;
+import static org.apache.solr.common.util.Utils.toJavabin;
 import static org.apache.solr.handler.SchemaDesignerAPI.getConfigSetZkPath;
 import static org.apache.solr.handler.SchemaDesignerAPI.getMutableId;
 import static org.apache.solr.handler.admin.ConfigSetsHandler.DEFAULT_CONFIGSET_NAME;
+import static org.apache.solr.schema.IndexSchema.NEST_PATH_FIELD_NAME;
+import static org.apache.solr.schema.IndexSchema.ROOT_FIELD_NAME;
 import static org.apache.solr.schema.ManagedIndexSchemaFactory.DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME;
 
-public class SchemaDesignerConfigSetHelper {
+public class SchemaDesignerConfigSetHelper implements SchemaDesignerConstants {
 
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  private static final String BLOB_STORE_ID = ".system";
-
-  private static final Set<String> excludeConfigSetNames = new HashSet<>(Arrays.asList(DEFAULT_CONFIGSET_NAME, BLOB_STORE_ID));
   private static final Set<String> removeFieldProps = new HashSet<>(Arrays.asList("href", "id", "copyDest"));
+  private static final List<String> includeLangIds = Arrays.asList("ws", "general", "rev", "sort");
   private static final String ZNODE_PATH_DELIM = "/";
+  private static final String MULTIVALUED = "multiValued";
+  private static final int TEXT_PREFIX_LEN = "text_".length();
+
 
   private final CoreContainer cc;
   private final SchemaSuggester schemaSuggester;
-  private final SchemaDesignerSettingsDAO settingsDAO;
 
-  SchemaDesignerConfigSetHelper(CoreContainer cc, SchemaSuggester schemaSuggester, SchemaDesignerSettingsDAO settingsDAO) {
+  SchemaDesignerConfigSetHelper(CoreContainer cc, SchemaSuggester schemaSuggester) {
     this.cc = cc;
     this.schemaSuggester = schemaSuggester;
-    this.settingsDAO = settingsDAO;
   }
 
   @SuppressWarnings("unchecked")
-  Map<String, Object> analyzeField(String mutableId, String fieldName, String fieldText) throws IOException {
-    String baseUrl = getBaseUrl(mutableId);
-    String fieldNameEnc = URLEncoder.encode(fieldName, StandardCharsets.UTF_8);
-    String url = baseUrl + "/" + mutableId + "/analysis/field?wt=json&analysis.showmatch=true&analysis.fieldname=" + fieldNameEnc + "&analysis.fieldvalue=POST";
-    HttpEntity entity;
-    Map<String, Object> analysis = Collections.emptyMap();
-    HttpPost httpPost = new HttpPost(url);
+  Map<String, Object> analyzeField(String configSet, String fieldName, String fieldText) throws IOException {
+    final String mutableId = getMutableId(configSet);
+    final URI uri;
     try {
-      httpPost.setHeader("Content-Type", "text/plain");
-      httpPost.setEntity(new ByteArrayEntity(fieldText.getBytes(StandardCharsets.UTF_8)));
-      entity = cloudClient().getHttpClient().execute(httpPost).getEntity();
-      Map<String, Object> response = (Map<String, Object>) fromJSONString(EntityUtils.toString(entity, StandardCharsets.UTF_8));
+      uri = collectionApiEndpoint(mutableId, "analysis", "field")
+          .setParameter(CommonParams.WT, CommonParams.JSON)
+          .setParameter("analysis.showmatch", "true")
+          .setParameter("analysis.fieldname", fieldName)
+          .setParameter("analysis.fieldvalue", "POST")
+          .build();
+    } catch (URISyntaxException e) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, e);
+    }
+
+    Map<String, Object> analysis = Collections.emptyMap();
+    HttpPost httpPost = new HttpPost(uri);
+    httpPost.setHeader("Content-Type", "text/plain");
+    httpPost.setEntity(new ByteArrayEntity(fieldText.getBytes(StandardCharsets.UTF_8)));
+    try {
+      HttpResponse resp = cloudClient().getHttpClient().execute(httpPost);
+      int statusCode = resp.getStatusLine().getStatusCode();
+      if (statusCode != HttpStatus.SC_OK) {
+        throw new SolrException(SolrException.ErrorCode.getErrorCode(statusCode),
+            EntityUtils.toString(resp.getEntity(), StandardCharsets.UTF_8));
+      }
+
+      Map<String, Object> response = (Map<String, Object>) fromJSONString(EntityUtils.toString(resp.getEntity(), StandardCharsets.UTF_8));
       if (response != null) {
         analysis = (Map<String, Object>) response.get("analysis");
       }
     } finally {
       httpPost.releaseConnection();
     }
+
     return analysis;
   }
 
@@ -161,21 +181,6 @@ public class SchemaDesignerConfigSetHelper {
       }
     }
     return collections;
-  }
-
-  Map<String, Boolean> listEnabledConfigs() throws IOException {
-    List<String> configsInZk = listConfigsInZk();
-    final Map<String, Boolean> configs = configsInZk.stream()
-        .filter(c -> !excludeConfigSetNames.contains(c) && !c.startsWith(DESIGNER_PREFIX))
-        .collect(Collectors.toMap(c -> c, c -> !settingsDAO.isDesignerDisabled(c)));
-
-    // add the in-progress but drop the _designer prefix
-    configsInZk.stream()
-        .filter(c -> c.startsWith(DESIGNER_PREFIX))
-        .map(c -> c.substring(DESIGNER_PREFIX.length()))
-        .forEach(c -> configs.putIfAbsent(c, true));
-
-    return configs;
   }
 
   @SuppressWarnings("unchecked")
@@ -219,6 +224,7 @@ public class SchemaDesignerConfigSetHelper {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Unsupported action in request body! " + addJson);
     }
 
+    // Using the SchemaAPI vs. working on the schema directly because SchemaField.create methods are package protected
     SchemaResponse.UpdateResponse schemaResponse = addAction.process(cloudClient(), mutableId);
     if (schemaResponse.getStatus() != 0) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, schemaResponse.getException());
@@ -247,9 +253,10 @@ public class SchemaDesignerConfigSetHelper {
     boolean needsRebuild = false;
 
     SolrException solrExc = null;
-    String updateType = "field";
+    String updateType;
     String updateError = null;
     if (updateJson.get("type") != null) {
+      updateType = schemaBeforeUpdate.isDynamicField(name) ? "dynamicField" : "field";
       try {
         needsRebuild = updateField(configSet, updateJson, schemaBeforeUpdate);
       } catch (SolrException exc) {
@@ -267,14 +274,7 @@ public class SchemaDesignerConfigSetHelper {
     // the update may have required a full rebuild of the index, otherwise, it's just a reload / re-index sample
     reloadTempCollection(mutableId, needsRebuild);
 
-    Map<String, Object> map = makeMap("rebuild", needsRebuild, "updateType", updateType);
-    if (updateError != null) {
-      map.put("updateError", updateError);
-    }
-    if (solrExc != null) {
-      map.put("solrExc", solrExc);
-    }
-    return map;
+    return makeMap("rebuild", needsRebuild, "updateType", updateType, "updateError", updateError, "solrExc", solrExc);
   }
 
   protected boolean updateFieldType(String configSet, String typeName, Map<String, Object> updateJson, ManagedIndexSchema schemaBeforeUpdate) {
@@ -287,8 +287,8 @@ public class SchemaDesignerConfigSetHelper {
     FieldType fieldType = schemaBeforeUpdate.getFieldTypeByName(typeName);
 
     // this is a field type
-    Object multiValued = typeAttrs.get("multiValued");
-    if (hasMultivalueChange(multiValued, fieldType)) {
+    Object multiValued = typeAttrs.get(MULTIVALUED);
+    if (typeHasMultiValuedChange(multiValued, fieldType)) {
       needsRebuild = true;
       log.warn("Re-building the temp collection for {} after type {} updated to multi-valued {}", configSet, typeName, multiValued);
     }
@@ -363,7 +363,7 @@ public class SchemaDesignerConfigSetHelper {
     }
 
     // detect if they're trying to copy multi-valued fields into a single-valued field
-    Object multiValued = diff.get("multiValued");
+    Object multiValued = diff.get(MULTIVALUED);
     if (multiValued == null) {
       // mv not overridden explicitly, but we need the actual value, which will come from the new type (if that changed) or the current field
       multiValued = type.equals(currentType) ? schemaField.multiValued() : schemaBeforeUpdate.getFieldTypeByName(type).isMultiValued();
@@ -376,7 +376,7 @@ public class SchemaDesignerConfigSetHelper {
         if (srcField.multiValued()) {
           log.warn("Cannot change multi-valued field {} to single-valued because it is a copy field destination for multi-valued field {}", name, src);
           multiValued = Boolean.TRUE;
-          diff.put("multiValued", multiValued);
+          diff.put(MULTIVALUED, multiValued);
           break;
         }
       }
@@ -389,7 +389,7 @@ public class SchemaDesignerConfigSetHelper {
 
     // switch from single-valued to multi-valued requires a full rebuild
     // See SOLR-12185 ... if we're switching from single to multi-valued, then it's a big operation
-    if (hasMultivalueChange(multiValued, schemaField)) {
+    if (fieldHasMultiValuedChange(multiValued, schemaField)) {
       needsRebuild = true;
       log.warn("Need to rebuild the temp collection for {} after field {} updated to multi-valued {}", configSet, name, multiValued);
     }
@@ -404,21 +404,22 @@ public class SchemaDesignerConfigSetHelper {
     }
 
     log.info("For {}, replacing field {} with attributes: {}", configSet, name, diff);
-    ManagedIndexSchema updatedSchema;
-    if (isDynamic) {
-      updatedSchema = schemaBeforeUpdate.replaceDynamicField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
-    } else {
-      updatedSchema = schemaBeforeUpdate.replaceField(name, schemaBeforeUpdate.getFieldTypeByName(type), diff);
-    }
+    final FieldType fieldType = schemaBeforeUpdate.getFieldTypeByName(type);
+    ManagedIndexSchema updatedSchema = isDynamic ? schemaBeforeUpdate.replaceDynamicField(name, fieldType, diff)
+        : schemaBeforeUpdate.replaceField(name, fieldType, diff);
 
     // persist the change before applying the copy-field updates
     updatedSchema.persistManagedSchema(false);
 
-    return applyCopyFieldUpdates(mutableId, copyDest, name, updatedSchema) || needsRebuild;
+    if (!isDynamic) {
+      applyCopyFieldUpdates(mutableId, copyDest, name, updatedSchema);
+    }
+
+    return needsRebuild;
   }
 
   protected void validateMultiValuedChange(String configSet, SchemaField field, Boolean multiValued) throws IOException {
-    List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
+    List<SolrInputDocument> docs = getStoredSampleDocs(configSet);
     if (!docs.isEmpty()) {
       boolean isMV = schemaSuggester.isMultiValued(field.getName(), docs);
       if (isMV && !multiValued) {
@@ -433,18 +434,34 @@ public class SchemaDesignerConfigSetHelper {
       throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
           "Cannot change type of the _version_ field; it must be a plong.");
     }
-    List<SolrInputDocument> docs = loadSampleDocsFromBlobStore(configSet);
+    List<SolrInputDocument> docs = getStoredSampleDocs(configSet);
     if (!docs.isEmpty()) {
       schemaSuggester.validateTypeChange(field, toType, docs);
     }
   }
 
+  void deleteStoredSampleDocs(String configSet) {
+    try {
+      cloudClient().deleteByQuery(BLOB_STORE_ID, "id:" + configSet + "_sample/*", 10);
+    } catch (IOException | SolrServerException exc) {
+      log.warn("Failed to delete sample docs from blob store for {}", configSet, exc);
+    }
+  }
+
   @SuppressWarnings("unchecked")
-  List<SolrInputDocument> loadSampleDocsFromBlobStore(final String configSet) throws IOException {
+  List<SolrInputDocument> getStoredSampleDocs(final String configSet) throws IOException {
     List<SolrInputDocument> docs = null;
-    String baseUrl = getBaseUrl(BLOB_STORE_ID);
-    String url = baseUrl + "/" + BLOB_STORE_ID + "/blob/" + configSet + "_sample?wt=filestream";
-    HttpGet httpGet = new HttpGet(url);
+
+    final URI uri;
+    try {
+      uri = collectionApiEndpoint(BLOB_STORE_ID, "blob", configSet + "_sample")
+          .setParameter(CommonParams.WT, "filestream")
+          .build();
+    } catch (URISyntaxException e) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, e);
+    }
+
+    HttpGet httpGet = new HttpGet(uri);
     try {
       HttpResponse entity = cloudClient().getHttpClient().execute(httpGet);
       int statusCode = entity.getStatusLine().getStatusCode();
@@ -463,9 +480,20 @@ public class SchemaDesignerConfigSetHelper {
     return docs != null ? docs : Collections.emptyList();
   }
 
-  void postDataToBlobStore(CloudSolrClient cloudClient, String blobName, byte[] bytes) throws IOException {
-    String baseUrl = getBaseUrl(BLOB_STORE_ID);
-    HttpPost httpPost = new HttpPost(baseUrl + "/" + BLOB_STORE_ID + "/blob/" + blobName);
+  void storeSampleDocs(final String configSet, List<SolrInputDocument> docs) throws IOException {
+    postDataToBlobStore(cloudClient(), configSet + "_sample",
+        DefaultSampleDocumentsLoader.streamAsBytes(toJavabin(docs)));
+  }
+
+  protected void postDataToBlobStore(CloudSolrClient cloudClient, String blobName, byte[] bytes) throws IOException {
+    final URI uri;
+    try {
+      uri = collectionApiEndpoint(BLOB_STORE_ID, "blob", blobName).build();
+    } catch (URISyntaxException e) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, e);
+    }
+
+    HttpPost httpPost = new HttpPost(uri);
     try {
       httpPost.setHeader("Content-Type", "application/octet-stream");
       httpPost.setEntity(new ByteArrayEntity(bytes));
@@ -480,7 +508,7 @@ public class SchemaDesignerConfigSetHelper {
     }
   }
 
-  String getBaseUrl(final String collection) {
+  private String getBaseUrl(final String collection) {
     String baseUrl = null;
     try {
       Set<String> liveNodes = zkStateReader().getClusterState().getLiveNodes();
@@ -502,52 +530,53 @@ public class SchemaDesignerConfigSetHelper {
     return baseUrl;
   }
 
+  private URIBuilder collectionApiEndpoint(final String collection, final String... morePathSegments) throws URISyntaxException {
+    URI baseUrl = new URI(getBaseUrl(collection));
+    // build up a list of path segments including any path in the base URL, collection, and additional segments provided by caller
+    List<String> path = new ArrayList<>(URLEncodedUtils.parsePathSegments(baseUrl.getPath()));
+    path.add(collection);
+    if (morePathSegments != null && morePathSegments.length > 0) {
+      path.addAll(Arrays.asList(morePathSegments));
+    }
+    return new URIBuilder(baseUrl).setPathSegments(path);
+  }
+
   protected String getManagedSchemaZkPath(final String configSet) {
     return getConfigSetZkPath(configSet, DEFAULT_MANAGED_SCHEMA_RESOURCE_NAME);
   }
 
-  void toggleNestedDocsFields(String mutableId, ManagedIndexSchema schema, boolean enabled) throws IOException, SolrServerException {
-    if (enabled) {
-      enableNestedDocsFields(schema, mutableId);
-    } else {
-      deleteNestedDocsFieldsIfNeeded(schema, mutableId, true);
-    }
+  ManagedIndexSchema toggleNestedDocsFields(ManagedIndexSchema schema, boolean enabled) {
+    return enabled ? enableNestedDocsFields(schema, true) : deleteNestedDocsFieldsIfNeeded(schema, true);
   }
 
-  protected void enableNestedDocsFields(ManagedIndexSchema schema, String mutableId) throws IOException, SolrServerException {
-    if (!schema.hasExplicitField("_root_")) {
-      Map<String, Object> fieldAttrs = new HashMap<>();
-      fieldAttrs.put("name", "_root_");
-      fieldAttrs.put("type", "string");
-      fieldAttrs.put("docValues", false);
-      fieldAttrs.put("indexed", true);
-      fieldAttrs.put("stored", false);
-      SchemaRequest.AddField addAction = new SchemaRequest.AddField(fieldAttrs);
-      SchemaResponse.UpdateResponse schemaResponse = addAction.process(cloudClient(), mutableId);
-      if (schemaResponse.getStatus() != 0) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to add _root_ field due to: " + schemaResponse.getException());
-      }
+  ManagedIndexSchema enableNestedDocsFields(ManagedIndexSchema schema, boolean persist) {
+    boolean madeChanges = false;
+
+    if (!schema.hasExplicitField(ROOT_FIELD_NAME)) {
+      Map<String, Object> fieldAttrs = makeMap("docValues", false, "indexed", true, "stored", false);
+      schema = (ManagedIndexSchema) schema.addField(schema.newField(ROOT_FIELD_NAME, "string", fieldAttrs), false);
+      madeChanges = true;
     }
 
-    if (!schema.hasExplicitField("_nest_path_")) {
-      Map<String, Object> fieldAttrs = new HashMap<>();
-      fieldAttrs.put("name", "_nest_path_");
-      fieldAttrs.put("type", "_nest_path_");
-      SchemaRequest.AddField addAction = new SchemaRequest.AddField(fieldAttrs);
-      SchemaResponse.UpdateResponse schemaResponse = addAction.process(cloudClient(), mutableId);
-      if (schemaResponse.getStatus() != 0) {
-        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Failed to add _nest_path_ field due to: " + schemaResponse.getException());
-      }
+    if (!schema.hasExplicitField(NEST_PATH_FIELD_NAME)) {
+      schema = (ManagedIndexSchema) schema.addField(schema.newField(NEST_PATH_FIELD_NAME, NEST_PATH_FIELD_NAME, Collections.emptyMap()), false);
+      madeChanges = true;
     }
+
+    if (madeChanges && persist) {
+      schema.persistManagedSchema(false);
+    }
+
+    return schema;
   }
 
-  protected ManagedIndexSchema deleteNestedDocsFieldsIfNeeded(ManagedIndexSchema schema, String mutableId, boolean persist) {
+  ManagedIndexSchema deleteNestedDocsFieldsIfNeeded(ManagedIndexSchema schema, boolean persist) {
     List<String> toDelete = new LinkedList<>();
-    if (schema.hasExplicitField("_root_")) {
-      toDelete.add("_root_");
+    if (schema.hasExplicitField(ROOT_FIELD_NAME)) {
+      toDelete.add(ROOT_FIELD_NAME);
     }
-    if (schema.hasExplicitField("_nest_path_")) {
-      toDelete.add("_nest_path_");
+    if (schema.hasExplicitField(NEST_PATH_FIELD_NAME)) {
+      toDelete.add(NEST_PATH_FIELD_NAME);
     }
     if (!toDelete.isEmpty()) {
       schema = schema.deleteFields(toDelete);
@@ -589,7 +618,7 @@ public class SchemaDesignerConfigSetHelper {
     return currentVersion;
   }
 
-  void createCollection(final String collection, final String configSet) throws Exception {
+  void createCollection(final String collection, final String configSet) throws KeeperException, InterruptedException, IOException, SolrServerException {
     RTimer timer = new RTimer();
     SolrResponse rsp = CollectionAdminRequest.createCollection(collection, configSet, 1, 1).process(cloudClient());
     CollectionsHandler.waitForActiveCollection(collection, cc, rsp);
@@ -666,13 +695,13 @@ public class SchemaDesignerConfigSetHelper {
     return updated;
   }
 
-  protected boolean hasMultivalueChange(Object multiValued, SchemaField schemaField) {
+  protected boolean fieldHasMultiValuedChange(Object multiValued, SchemaField schemaField) {
     return (multiValued == null ||
         (Boolean.TRUE.equals(multiValued) && !schemaField.multiValued()) ||
         (Boolean.FALSE.equals(multiValued) && schemaField.multiValued()));
   }
 
-  protected boolean hasMultivalueChange(Object multiValued, FieldType fieldType) {
+  protected boolean typeHasMultiValuedChange(Object multiValued, FieldType fieldType) {
     return (multiValued == null ||
         (Boolean.TRUE.equals(multiValued) && !fieldType.isMultiValued()) ||
         (Boolean.FALSE.equals(multiValued) && fieldType.isMultiValued()));
@@ -692,14 +721,23 @@ public class SchemaDesignerConfigSetHelper {
   }
 
   protected ManagedIndexSchema removeLanguageSpecificObjectsAndFiles(String configSet, ManagedIndexSchema schema, List<String> langs) throws KeeperException, InterruptedException {
-    final Set<String> languages = new HashSet<>(Arrays.asList("ws", "general", "rev", "sort"));
+    final Set<String> languages = new HashSet<>(includeLangIds);
     languages.addAll(langs);
 
-    final Set<String> usedTypes = schema.getFields().values().stream().map(f -> f.getType().getTypeName()).collect(Collectors.toSet());
+    final Set<String> usedTypes =
+        schema.getFields().values().stream().map(f -> f.getType().getTypeName()).collect(Collectors.toSet());
+
+    final Set<String> usedLangs =
+        schema.getFields().values().stream().filter(f -> isTextType(f.getType()))
+            .map(f -> f.getType().getTypeName().substring(TEXT_PREFIX_LEN)).collect(Collectors.toSet());
+
+    // don't remove types / files for langs that are explicitly being used by a field
+    languages.addAll(usedLangs);
+
     Map<String, FieldType> types = schema.getFieldTypes();
     final Set<String> toRemove = types.values().stream()
-        .filter(t -> t.getTypeName().startsWith("text_") && TextField.class.equals(t.getClass()))
-        .filter(t -> !languages.contains(t.getTypeName().substring("text_".length())))
+        .filter(this::isTextType)
+        .filter(t -> !languages.contains(t.getTypeName().substring(TEXT_PREFIX_LEN)))
         .map(FieldType::getTypeName)
         .filter(t -> !usedTypes.contains(t)) // not explicitly used by a field
         .collect(Collectors.toSet());
@@ -719,23 +757,7 @@ public class SchemaDesignerConfigSetHelper {
     final Set<String> langExt = languages.stream().map(l -> "_" + l).collect(Collectors.toSet());
     try {
       ZkMaintenanceUtils.traverseZkTree(zkClient, configPathInZk, ZkMaintenanceUtils.VISIT_ORDER.VISIT_POST, path -> {
-        if (path.endsWith(".txt")) {
-          int slashAt = path.lastIndexOf('/');
-          String fileName = slashAt != -1 ? path.substring(slashAt + 1) : "";
-          if (!fileName.contains("_")) return; // not a match
-
-          final String pathWoExt = fileName.substring(0, fileName.length() - 4);
-          boolean matchesLang = false;
-          for (String lang : langExt) {
-            if (pathWoExt.endsWith(lang)) {
-              matchesLang = true;
-              break;
-            }
-          }
-          if (!matchesLang) {
-            toRemoveFiles.add(path);
-          }
-        }
+        if (!isMatchingLangOrNonLangFile(path, langExt)) toRemoveFiles.add(path);
       });
     } catch (KeeperException.NoNodeException nne) {
       // no-op
@@ -760,7 +782,7 @@ public class SchemaDesignerConfigSetHelper {
     // pull the dynamic fields from the copyFrom schema
     ManagedIndexSchema copyFromSchema = loadLatestSchema(copyFrom);
 
-    final Set<String> langSet = new HashSet<>(Arrays.asList("ws", "general", "rev", "sort"));
+    final Set<String> langSet = new HashSet<>(includeLangIds);
     langSet.addAll(langs);
 
     boolean restoreAllLangs = langs.isEmpty();
@@ -807,8 +829,7 @@ public class SchemaDesignerConfigSetHelper {
     // Restore field types
     final Map<String, FieldType> existingTypes = schema.getFieldTypes();
     List<FieldType> addTypes = copyFromSchema.getFieldTypes().values().stream()
-        .filter(t -> isLangTextType(t, restoreAllLangs, langSet))
-        .filter(t -> !existingTypes.containsKey(t.getTypeName()))
+        .filter(t -> isLangTextType(t, restoreAllLangs ? null : langSet) && !existingTypes.containsKey(t.getTypeName()))
         .collect(Collectors.toList());
     if (!addTypes.isEmpty()) {
       schema = schema.addFieldTypes(addTypes, false);
@@ -821,7 +842,7 @@ public class SchemaDesignerConfigSetHelper {
           .collect(Collectors.toSet());
 
       final Set<String> langFieldTypeNames = schema.getFieldTypes().values().stream()
-          .filter(t -> isLangTextType(t, restoreAllLangs, langSet))
+          .filter(t -> isLangTextType(t, restoreAllLangs ? null : langSet))
           .map(FieldType::getTypeName)
           .collect(Collectors.toSet());
 
@@ -840,10 +861,33 @@ public class SchemaDesignerConfigSetHelper {
     return schema;
   }
 
-  private boolean isLangTextType(final FieldType t, final boolean restoreAllLangs, final Set<String> langSet) {
-    return t.getTypeName().startsWith("text_") &&
-        TextField.class.equals(t.getClass()) &&
-        (restoreAllLangs || langSet.contains(t.getTypeName().substring("text_".length())));
+  private boolean isMatchingLangOrNonLangFile(final String path, final Set<String> langs) {
+    if (!path.endsWith(".txt"))
+      return true; // not a .txt file, always include
+
+    int slashAt = path.lastIndexOf('/');
+    String fileName = slashAt != -1 ? path.substring(slashAt + 1) : "";
+    if (!fileName.contains("_"))
+      return true; // looking for file names like stopwords_en.txt, not a match, so skip it
+
+    // remove the .txt extension
+    final String pathWoExt = fileName.substring(0, fileName.length() - 4);
+    for (String lang : langs) {
+      if (pathWoExt.endsWith(lang)) {
+        return true;
+      }
+    }
+
+    // if we fall thru to here, then the file should be excluded
+    return false;
+  }
+
+  private boolean isTextType(final FieldType t) {
+    return t.getTypeName().startsWith("text_") && TextField.class.equals(t.getClass());
+  }
+
+  private boolean isLangTextType(final FieldType t, final Set<String> langSet) {
+    return isTextType(t) && (langSet == null || langSet.contains(t.getTypeName().substring("text_".length())));
   }
 
   protected ManagedIndexSchema removeDynamicFields(ManagedIndexSchema schema) {
@@ -877,7 +921,7 @@ public class SchemaDesignerConfigSetHelper {
 
     // only restore language specific dynamic fields that match our langSet
     if (!langs.isEmpty()) {
-      final Set<String> langSet = new HashSet<>(Arrays.asList("ws", "general", "rev", "sort"));
+      final Set<String> langSet = new HashSet<>(includeLangIds);
       langSet.addAll(langs);
       toAdd = toAdd.stream()
           .filter(df -> !df.getName().startsWith("*_txt_") || langSet.contains(df.getName().substring("*_txt_".length())))
@@ -920,13 +964,13 @@ public class SchemaDesignerConfigSetHelper {
     }
   }
 
-  private List<String> listConfigsInZk() throws IOException {
+  List<String> listConfigsInZk() throws IOException {
     return cc.getConfigSetService().listConfigs();
   }
 
   byte[] downloadAndZipConfigSet(String configId) throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    Path tmpDirectory = Files.createTempDirectory("schema-designer-" + configId);
+    Path tmpDirectory = Files.createTempDirectory("schema-designer-" + FilenameUtils.getName(configId));
     File tmpDir = tmpDirectory.toFile();
     try {
       cc.getConfigSetService().downloadConfig(configId, tmpDirectory);

@@ -87,7 +87,7 @@ public class TestSampleDocumentsLoader {
   protected List<SolrInputDocument> loadTestDocs(SolrParams params, File inputDocs, int maxDocsToLoad, int expectedDocs) throws IOException {
     assertTrue(inputDocs.getCanonicalPath() + " not found", inputDocs.isFile());
     ContentStream stream = getContentStream(inputDocs);
-    SampleDocuments sampleDocs = loader.load(params, stream, maxDocsToLoad);
+    SampleDocuments sampleDocs = loader.parseDocsFromStream(params, stream, maxDocsToLoad);
     assertNotNull(sampleDocs);
     assertEquals(sampleDocs.parsed.size(), expectedDocs);
     return sampleDocs.parsed;

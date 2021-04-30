@@ -43,8 +43,10 @@ import static org.apache.solr.common.util.Utils.makeMap;
 import static org.apache.solr.common.util.Utils.toJavabin;
 import static org.apache.solr.handler.SchemaDesignerAPI.getMutableId;
 import static org.apache.solr.handler.admin.ConfigSetsHandler.DEFAULT_CONFIGSET_NAME;
+import static org.apache.solr.schema.IndexSchema.NEST_PATH_FIELD_NAME;
+import static org.apache.solr.schema.IndexSchema.ROOT_FIELD_NAME;
 
-public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
+public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase implements SchemaDesignerConstants {
 
   private CoreContainer cc;
   private SchemaDesignerConfigSetHelper helper;
@@ -52,10 +54,10 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
   @BeforeClass
   public static void createCluster() throws Exception {
     System.setProperty("managed.schema.mutable", "true");
-    configureCluster(1).addConfig("_default", new File(ExternalPaths.DEFAULT_CONFIGSET).toPath()).configure();
+    configureCluster(1).addConfig(DEFAULT_CONFIGSET_NAME, new File(ExternalPaths.DEFAULT_CONFIGSET).toPath()).configure();
     // SchemaDesignerConfigSetHelper depends on the blob store
-    CollectionAdminRequest.createCollection(".system", 1, 1).process(cluster.getSolrClient());
-    cluster.waitForActiveCollection(".system", 1, 1);
+    CollectionAdminRequest.createCollection(BLOB_STORE_ID, 1, 1).process(cluster.getSolrClient());
+    cluster.waitForActiveCollection(BLOB_STORE_ID, 1, 1);
   }
 
   @AfterClass
@@ -72,8 +74,7 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     assertNotNull(cluster);
     cc = cluster.getJettySolrRunner(0).getCoreContainer();
     assertNotNull(cc);
-    helper = new SchemaDesignerConfigSetHelper(cc, SchemaDesignerAPI.newSchemaSuggester(cc.getConfig()),
-        new SchemaDesignerSettingsDAO(cc.getResourceLoader(), cc.getZkController()));
+    helper = new SchemaDesignerConfigSetHelper(cc, SchemaDesignerAPI.newSchemaSuggester(cc.getConfig()));
   }
 
   @Test
@@ -92,11 +93,6 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
 
     assertTrue(schema.persistManagedSchema(false));
 
-    Map<String, Boolean> configs = helper.listEnabledConfigs();
-    assertNotNull(configs);
-    assertEquals(true, configs.get(configSet));
-    assertFalse(configs.containsKey(DEFAULT_CONFIGSET_NAME));
-
     // create the temp collection
     helper.createCollection(mutableId, mutableId);
 
@@ -104,9 +100,6 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     assertTrue(collsForConfig.isEmpty());
 
     helper.reloadTempCollection(mutableId, true);
-
-    String baseUrl = helper.getBaseUrl(mutableId);
-    assertNotNull(baseUrl);
 
     // version is incremented b/c we called persist on the schema above
     int version = helper.getCurrentSchemaVersion(mutableId);
@@ -122,8 +115,8 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
   }
 
   @Test
-  public void testToggleLanguages() throws Exception {
-    String configSet = "testToggleLanguages";
+  public void testEnableDisableOptions() throws Exception {
+    String configSet = "testEnableDisableOptions";
     String mutableId = getMutableId(configSet);
     cc.getConfigSetService().copyConfig(DEFAULT_CONFIGSET_NAME, mutableId);
 
@@ -148,6 +141,24 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Arrays.asList("en", "fr"), true, DEFAULT_CONFIGSET_NAME);
     assertNotNull(schema.getFieldTypeByName("text_en"));
     assertNotNull(schema.getFieldOrNull("*_txt_en"));
+    assertTrue(cluster.getZkClient().exists(SchemaDesignerAPI.getConfigSetZkPath(mutableId, "lang/stopwords_en.txt"), true));
+    assertNotNull(schema.getFieldTypeByName("text_fr"));
+    assertNotNull(schema.getFieldOrNull("*_txt_fr"));
+    assertNull(schema.getFieldOrNull("*_txt_ga"));
+
+    // add a field that uses text_en and then try removing "en" from the lang set
+    helper.createCollection(mutableId, mutableId); // need to create field
+    Map<String, Object> addField = makeMap("name", "title", "type", "text_en");
+    String addedFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-field", addField));
+    assertEquals("title", addedFieldName);
+
+    schema = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertNotNull(schema.getField("title"));
+
+    schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Collections.singletonList("fr"), true, DEFAULT_CONFIGSET_NAME);
+    assertNotNull(schema.getFieldTypeByName("text_en")); // being used, so not removed
+    assertNotNull(schema.getFieldOrNull("*_txt_en"));
+    assertTrue(cluster.getZkClient().exists(SchemaDesignerAPI.getConfigSetZkPath(mutableId, "lang/stopwords_en.txt"), true));
     assertNotNull(schema.getFieldTypeByName("text_fr"));
     assertNotNull(schema.getFieldOrNull("*_txt_fr"));
     assertNull(schema.getFieldOrNull("*_txt_ga"));
@@ -159,17 +170,29 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     assertNotNull(schema.getFieldOrNull("*_txt_fr"));
     assertNotNull(schema.getFieldTypeByName("text_ga"));
     assertNotNull(schema.getFieldOrNull("*_txt_ga"));
+
+    schema = helper.syncLanguageSpecificObjectsAndFiles(configSet, schema, Collections.emptyList(), false, DEFAULT_CONFIGSET_NAME);
+    assertNotNull(schema.getFieldTypeByName("text_en"));
+    assertNull(schema.getFieldOrNull("*_txt_en"));
+    assertNotNull(schema.getFieldTypeByName("text_fr"));
+    assertNull(schema.getFieldOrNull("*_txt_fr"));
+    assertNotNull(schema.getFieldTypeByName("text_ga"));
+    assertNull(schema.getFieldOrNull("*_txt_ga"));
+
+    schema = helper.toggleNestedDocsFields(schema, true);
+    assertTrue(schema.hasExplicitField(ROOT_FIELD_NAME));
+    assertTrue(schema.hasExplicitField(NEST_PATH_FIELD_NAME));
+    schema = helper.toggleNestedDocsFields(schema, false);
+    assertFalse(schema.hasExplicitField(ROOT_FIELD_NAME));
+    assertFalse(schema.hasExplicitField(NEST_PATH_FIELD_NAME));
+    schema = helper.toggleNestedDocsFields(schema, true);
+    assertTrue(schema.hasExplicitField(ROOT_FIELD_NAME));
+    assertTrue(schema.hasExplicitField(NEST_PATH_FIELD_NAME));
   }
 
   @Test
-  public void testAddUpdateObjects() throws Exception {
-    String configSet = "testAddUpdateObjects";
-    String mutableId = getMutableId(configSet);
-    cc.getConfigSetService().copyConfig(DEFAULT_CONFIGSET_NAME, mutableId);
-
-    ManagedIndexSchema schema = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
-    assertEquals(schema.getSchemaZkVersion(), helper.getCurrentSchemaVersion(mutableId));
-    helper.createCollection(mutableId, mutableId);
+  public void testPersistSampleDocs() throws Exception {
+    String configSet = "testPersistSampleDocs";
 
     SolrInputDocument doc = new SolrInputDocument();
     doc.setField("id", "1");
@@ -182,9 +205,94 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     helper.postDataToBlobStore(cluster.getSolrClient(), configSet + "_sample",
         DefaultSampleDocumentsLoader.streamAsBytes(toJavabin(Collections.singletonList(doc))));
 
-    List<SolrInputDocument> docs = helper.loadSampleDocsFromBlobStore(configSet);
+    List<SolrInputDocument> docs = helper.getStoredSampleDocs(configSet);
     assertTrue(docs != null && docs.size() == 1);
     assertEquals("1", docs.get(0).getFieldValue("id"));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testAnalyzeField() throws Exception {
+    String configSet = "testAnalyzeField";
+
+    String mutableId = getMutableId(configSet);
+    cc.getConfigSetService().copyConfig(DEFAULT_CONFIGSET_NAME, mutableId);
+
+    ManagedIndexSchema schema = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertEquals(schema.getSchemaZkVersion(), helper.getCurrentSchemaVersion(mutableId));
+    helper.createCollection(mutableId, mutableId);
+
+    Map<String, Object> addField = makeMap("name", "title", "type", "text_en");
+    String addedFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-field", addField));
+    assertEquals("title", addedFieldName);
+
+    Map<String, Object> analysis = helper.analyzeField(configSet, "title", "The Pillars of the Earth");
+
+    Map<String, Object> title = (Map<String, Object>) ((Map<String, Object>) analysis.get("field_names")).get("title");
+    assertNotNull(title);
+    List<Object> index = (List<Object>) title.get("index");
+    assertNotNull(index);
+    assertFalse(index.isEmpty());
+  }
+
+  @Test
+  public void testCopyFieldUpdates() throws Exception {
+    String configSet = "testCopyFieldUpdates";
+    String mutableId = getMutableId(configSet);
+    cc.getConfigSetService().copyConfig(DEFAULT_CONFIGSET_NAME, mutableId);
+
+    ManagedIndexSchema schema = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertEquals(schema.getSchemaZkVersion(), helper.getCurrentSchemaVersion(mutableId));
+    helper.createCollection(mutableId, mutableId);
+
+    // add / update field
+    Map<String, Object> addField = makeMap("name", "author", "type", "string");
+    String addedFieldName = helper.addSchemaObject(configSet, Collections.singletonMap("add-field", addField));
+    assertEquals("author", addedFieldName);
+
+    helper.addSchemaObject(configSet,
+        Collections.singletonMap("add-field", makeMap("name", "_catch_all_", "type", "text_general")));
+
+    Map<String, Object> updateField = makeMap("name", "author", "type", "string", "copyDest", "_text_");
+    ManagedIndexSchema latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    latest.getField("_catch_all_");
+
+    Map<String, Object> resp = helper.updateSchemaObject(configSet, updateField, latest);
+    assertNotNull(resp);
+    assertEquals("field", resp.get("updateType"));
+    assertEquals(false, resp.get("rebuild"));
+
+    updateField = makeMap("name", "author", "type", "string", "copyDest", "_text_,_catch_all_");
+    latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    resp = helper.updateSchemaObject(configSet, updateField, latest);
+    assertNotNull(resp);
+    assertEquals("field", resp.get("updateType"));
+    assertEquals(false, resp.get("rebuild"));
+
+    latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertEquals(Collections.singletonList("author"), latest.getCopySources("_text_"));
+    assertEquals(Collections.singletonList("author"), latest.getCopySources("_catch_all_"));
+
+    updateField = makeMap("name", "author", "type", "string", "copyDest", "");
+    latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    resp = helper.updateSchemaObject(configSet, updateField, latest);
+    assertNotNull(resp);
+    assertEquals("field", resp.get("updateType"));
+    assertEquals(false, resp.get("rebuild"));
+    latest = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertTrue(latest.getCopySources("_text_").isEmpty());
+    assertTrue(latest.getCopySources("_catch_all_").isEmpty());
+  }
+
+  @Test
+  public void testAddUpdateObjects() throws Exception {
+    String configSet = "testAddUpdateObjects";
+    String mutableId = getMutableId(configSet);
+    cc.getConfigSetService().copyConfig(DEFAULT_CONFIGSET_NAME, mutableId);
+
+    ManagedIndexSchema schema = helper.loadLatestSchema(helper.loadSolrConfig(mutableId));
+    assertEquals(schema.getSchemaZkVersion(), helper.getCurrentSchemaVersion(mutableId));
+    helper.createCollection(mutableId, mutableId);
 
     // add / update field
     Map<String, Object> addField = makeMap("name", "author", "type", "string");
@@ -248,5 +356,6 @@ public class TestSchemaDesignerConfigSetHelper extends SolrCloudTestCase {
     resp = helper.updateSchemaObject(configSet, updateDynField, helper.loadLatestSchema(helper.loadSolrConfig(mutableId)));
     assertEquals("*_test", addedDynFieldName);
     assertNotNull(resp);
+    assertEquals("dynamicField", resp.get("updateType"));
   }
 }

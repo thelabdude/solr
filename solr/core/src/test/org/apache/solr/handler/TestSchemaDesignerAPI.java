@@ -21,12 +21,10 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.request.CollectionAdminRequest;
@@ -55,27 +53,13 @@ import org.junit.Test;
 
 import static org.apache.solr.common.params.CommonParams.JSON_MIME;
 import static org.apache.solr.common.util.Utils.makeMap;
-import static org.apache.solr.handler.SchemaDesignerAPI.CLEANUP_TEMP_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.CONFIG_SET_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.COPY_FROM_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.DISABLE_DESIGNER_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.DOC_ID_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_DYNAMIC_FIELDS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_FIELD_GUESSING_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_NESTED_DOCS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.FIELD_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.INDEX_TO_COLLECTION_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.LANGUAGES_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.NEW_COLLECTION_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.RELOAD_COLLECTIONS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.SCHEMA_VERSION_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.UNIQUE_KEY_FIELD_PARAM;
 import static org.apache.solr.handler.SchemaDesignerAPI.getMutableId;
+import static org.apache.solr.handler.admin.ConfigSetsHandler.DEFAULT_CONFIGSET_NAME;
 import static org.apache.solr.response.RawResponseWriter.CONTENT;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class TestSchemaDesignerAPI extends SolrCloudTestCase {
+public class TestSchemaDesignerAPI extends SolrCloudTestCase implements SchemaDesignerConstants {
 
   private CoreContainer cc;
   private SchemaDesignerAPI schemaDesignerAPI;
@@ -83,10 +67,10 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
   @BeforeClass
   public static void createCluster() throws Exception {
     System.setProperty("managed.schema.mutable", "true");
-    configureCluster(1).addConfig("_default", new File(ExternalPaths.DEFAULT_CONFIGSET).toPath()).configure();
+    configureCluster(1).addConfig(DEFAULT_CONFIGSET_NAME, new File(ExternalPaths.DEFAULT_CONFIGSET).toPath()).configure();
     // SchemaDesignerAPI depends on the blob store
-    CollectionAdminRequest.createCollection(".system", 1, 1).process(cluster.getSolrClient());
-    cluster.waitForActiveCollection(".system", 1, 1);
+    CollectionAdminRequest.createCollection(BLOB_STORE_ID, 1, 1).process(cluster.getSolrClient());
+    cluster.waitForActiveCollection(BLOB_STORE_ID, 1, 1);
   }
 
   @AfterClass
@@ -729,28 +713,27 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
 
     String mutableId = getMutableId(configSet);
     SchemaDesignerConfigSetHelper configSetHelper =
-        new SchemaDesignerConfigSetHelper(cc, SchemaDesignerAPI.newSchemaSuggester(cc.getConfig()),
-            new SchemaDesignerSettingsDAO(cc.getResourceLoader(), cc.getZkController()));
-    ManagedIndexSchema schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+        new SchemaDesignerConfigSetHelper(cc, SchemaDesignerAPI.newSchemaSuggester(cc.getConfig()));
+    ManagedIndexSchema schema = schemaDesignerAPI.loadLatestSchema(mutableId);
 
     // make it required
     Map<String, Object> updateField = makeMap("name", fieldName, "type", field.get("type"), "required", true);
     configSetHelper.updateField(configSet, updateField, schema);
 
-    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId);
     SchemaField schemaField = schema.getField(fieldName);
     assertTrue(schemaField.isRequired());
 
     updateField = makeMap("name", fieldName, "type", field.get("type"), "required", false, "stored", false);
     configSetHelper.updateField(configSet, updateField, schema);
-    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId);
     schemaField = schema.getField(fieldName);
     assertFalse(schemaField.isRequired());
     assertFalse(schemaField.stored());
 
     updateField = makeMap("name", fieldName, "type", field.get("type"), "required", false, "stored", false, "multiValued", true);
     configSetHelper.updateField(configSet, updateField, schema);
-    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId);
     schemaField = schema.getField(fieldName);
     assertFalse(schemaField.isRequired());
     assertFalse(schemaField.stored());
@@ -758,7 +741,7 @@ public class TestSchemaDesignerAPI extends SolrCloudTestCase {
 
     updateField = makeMap("name", fieldName, "type", "strings", "copyDest", "_text_");
     configSetHelper.updateField(configSet, updateField, schema);
-    schema = schemaDesignerAPI.loadLatestSchema(mutableId, null);
+    schema = schemaDesignerAPI.loadLatestSchema(mutableId);
     schemaField = schema.getField(fieldName);
     assertTrue(schemaField.multiValued());
     assertEquals("strings", schemaField.getType().getTypeName());

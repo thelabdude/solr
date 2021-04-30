@@ -33,23 +33,16 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.apache.solr.common.util.Utils.makeMap;
-import static org.apache.solr.handler.SchemaDesignerAPI.AUTO_CREATE_FIELDS;
-import static org.apache.solr.handler.SchemaDesignerAPI.COPY_FROM_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.DESIGNER_KEY;
-import static org.apache.solr.handler.SchemaDesignerAPI.DISABLED;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_DYNAMIC_FIELDS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.ENABLE_NESTED_DOCS_PARAM;
-import static org.apache.solr.handler.SchemaDesignerAPI.LANGUAGES_PARAM;
 import static org.apache.solr.handler.admin.ConfigSetsHandler.DEFAULT_CONFIGSET_NAME;
 
-public class TestSchemaDesignerSettingsDAO extends SolrCloudTestCase {
+public class TestSchemaDesignerSettingsDAO extends SolrCloudTestCase implements SchemaDesignerConstants {
 
   private CoreContainer cc;
 
   @BeforeClass
   public static void createCluster() throws Exception {
     System.setProperty("managed.schema.mutable", "true");
-    configureCluster(1).addConfig("_default", new File(ExternalPaths.DEFAULT_CONFIGSET).toPath()).configure();
+    configureCluster(1).addConfig(DEFAULT_CONFIGSET_NAME, new File(ExternalPaths.DEFAULT_CONFIGSET).toPath()).configure();
   }
 
   @AfterClass
@@ -77,7 +70,7 @@ public class TestSchemaDesignerSettingsDAO extends SolrCloudTestCase {
     CollectionsHandler.waitForActiveCollection(collection, cc, rsp);
 
     SchemaDesignerSettingsDAO dao = new SchemaDesignerSettingsDAO(cc.getResourceLoader(), cc.getZkController());
-    Map<String, Object> settings = dao.getSettings(configSet);
+    SchemaDesignerSettings settings = dao.getSettings(configSet);
     assertNotNull(settings);
 
     Map<String, Object> expSettings = makeMap(
@@ -87,9 +80,8 @@ public class TestSchemaDesignerSettingsDAO extends SolrCloudTestCase {
         DESIGNER_KEY + LANGUAGES_PARAM, Collections.emptyList());
 
     assertDesignerSettings(expSettings, settings);
-
-    settings.put(DESIGNER_KEY + DISABLED, false);
-    settings.put(DESIGNER_KEY + COPY_FROM_PARAM, "foo");
+    settings.setDisabled(false);
+    settings.setCopyFrom("foo");
 
     assertTrue("updated settings should have changed in ZK", dao.persistIfChanged(configSet, settings));
 
@@ -106,12 +98,12 @@ public class TestSchemaDesignerSettingsDAO extends SolrCloudTestCase {
     assertDesignerSettings(expSettings, settings);
     assertFalse("should not be disabled", dao.isDesignerDisabled(configSet));
 
-    settings.put(DESIGNER_KEY + DISABLED, true);
-    settings.put(DESIGNER_KEY + COPY_FROM_PARAM, "bar");
-    settings.put(DESIGNER_KEY + ENABLE_DYNAMIC_FIELDS_PARAM, false);
-    settings.put(DESIGNER_KEY + ENABLE_NESTED_DOCS_PARAM, true);
-    settings.put(AUTO_CREATE_FIELDS, false);
-    settings.put(DESIGNER_KEY + LANGUAGES_PARAM, Collections.singletonList("en"));
+    settings.setDisabled(true);
+    settings.setCopyFrom("bar");
+    settings.setDynamicFieldsEnabled(false);
+    settings.setNestedDocsEnabled(true);
+    settings.setFieldGuessingEnabled(false);
+    settings.setLanguages(Collections.singletonList("en"));
 
     assertTrue("updated settings should have changed in ZK", dao.persistIfChanged(configSet, settings));
     settings = dao.getSettings(configSet);
@@ -128,11 +120,8 @@ public class TestSchemaDesignerSettingsDAO extends SolrCloudTestCase {
     assertTrue("should be disabled", dao.isDesignerDisabled(configSet));
   }
 
-  protected void assertDesignerSettings(Map<String, Object> expected, Map<String, Object> actual) {
-    for (String expKey : expected.keySet()) {
-      Object expValue = expected.get(expKey);
-      Object actValue = actual.get(expKey);
-      assertEquals("Value for designer setting '" + expKey + "' not match expected!", expValue, actValue);
-    }
+  protected void assertDesignerSettings(Map<String, Object> expectedMap, SchemaDesignerSettings actual) {
+    SchemaDesignerSettings expected = new SchemaDesignerSettings(expectedMap);
+    assertEquals(expected, actual);
   }
 }

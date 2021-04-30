@@ -1,6 +1,5 @@
 package org.apache.solr.schema;
 
-import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -13,15 +12,11 @@ import java.util.stream.Stream;
 import com.google.common.collect.MapDifference;
 import com.google.common.collect.Maps;
 import org.apache.solr.common.util.SimpleOrderedMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Utility methods for comparing managed index schemas
  */
 public class ManagedSchemaDiff {
-
-  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private static final String UPDATED_KEY_STRING = "updated";
   private static final String ADDED_KEY_STRING = "added";
@@ -32,6 +27,38 @@ public class ManagedSchemaDiff {
   private static final String DYNAMIC_FIELDS_KEY_STRING = "dynamicFields";
   private static final String COPY_FIELDS_KEY_STRING = "copyFields";
 
+  /**
+   * Compute difference between two managed schemas. The returned map consists of changed, new, removed
+   * elements in fields, field types, dynamic fields and copy fields between input schemas.
+   *
+   * <pre> Output format when rendered to json will look like below:
+   *   {@code
+   *   {
+   *     "fields": {
+   *       "updated": {...},
+   *       "added": {...},
+   *       "removed": {...}
+   *     },
+   *     "fieldTypes": {
+   *       "updated": {...},
+   *       "added": {...},
+   *       "removed": {...}
+   *     },
+   *     "dynamicFields": {
+   *       "updated": {...},
+   *       "added": {...},
+   *       "removed": {...}
+   *     },
+   *     "copyFields: {
+   *       "new": [...],
+   *       "old": [...]
+   *     }
+   *   }
+   * </pre>
+   * @param oldSchema instance of {@link ManagedIndexSchema}
+   * @param newSchema instance of {@link ManagedIndexSchema}
+   * @return the difference between two schemas
+   */
   public static Map<String, Object> diff(ManagedIndexSchema oldSchema, ManagedIndexSchema newSchema) {
     Map<String, Object> diff = new HashMap<>();
 
@@ -56,7 +83,45 @@ public class ManagedSchemaDiff {
     return diff;
   }
 
-  protected static Map<String, Object> diff(Map<String, SimpleOrderedMap<Object>> map1, Map<String, SimpleOrderedMap<Object>> map2) {
+  /**
+   * Compute difference between two map objects with {@link SimpleOrderedMap} as values.
+   *
+   * <pre> Example of the output format when rendered to json
+   *   {@code
+   *    {
+   *      "updated": {
+   *        "stringField": [
+   *        {
+   *          "docValues": "false"
+   *        },
+   *        {
+   *          "docValues": "true"
+   *        }
+   *      },
+   *      "added": {
+   *        "newstringfield: {
+   *          "name": "newstringfield",
+   *          "type": "string",
+   *          .....
+   *        }
+   *      },
+   *      "removed": {
+   *        "oldstringfield": {
+   *          "name": "oldstringfield",
+   *          "type": "string",
+   *          .....
+   *        }
+   *      }
+   *    }
+   *   }
+   * </pre>
+   * @param map1 instance of Map with {@link SimpleOrderedMap} elements
+   * @param map2 instance of Map with {@link SimpleOrderedMap} elements
+   * @return the difference between two Map
+   */
+  protected static Map<String, Object> diff(
+      Map<String, SimpleOrderedMap<Object>> map1,
+      Map<String, SimpleOrderedMap<Object>> map2) {
     Map<String, List<Map<String, Object>>> changedValues = new HashMap<>();
     Map<String, SimpleOrderedMap<Object>> newValues = new HashMap<>();
     Map<String, SimpleOrderedMap<Object>> removedValues = new HashMap<>();
@@ -96,10 +161,27 @@ public class ManagedSchemaDiff {
   }
 
   /**
-   * TODO:
-   * @param simpleOrderedMap1 TODO
-   * @param simpleOrderedMap2 TODO
-   * @return TODO
+   * Compute difference between two {@link SimpleOrderedMap} instances
+   *
+   * <pre> Output format example when rendered to json
+   *   {@code
+   *    [
+   *         {
+   *           "stored": false,
+   *           "type": "string",
+   *           "multiValued": false
+   *         },
+   *         {
+   *           "stored": true,
+   *           "type": "strings",
+   *           "multiValued": true
+   *         }
+   *       ]
+   *   }
+   * </pre>
+   * @param simpleOrderedMap1 Map to treat as "left" map
+   * @param simpleOrderedMap2 Map to treat as "right" map
+   * @return List containing the left diff and right diff
    */
   @SuppressWarnings("unchecked")
   private static List<Map<String, Object>> getMapDifference(

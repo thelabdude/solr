@@ -1017,8 +1017,8 @@ limitations under the License.
   left: 650px;
   padding: 10px;
   width: 570px;
-  height: 600px;
   overflow: auto;
+  max-height: 600px;
 }
 
 #content #designer table.diff {

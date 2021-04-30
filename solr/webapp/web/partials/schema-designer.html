@@ -225,8 +225,12 @@ limitations under the License.
       </div>
 
       <div id="show-diff-dialog" class="diff" ng-show="showDiff && showPublish">
+        <div ng-hide="fieldsDiff != null || fieldTypesDiff != null || dynamicFieldsDiff != null || copyFieldsDiff != null"
+             ng-show="Object.keys(fieldsDiff).length > 0 && Object.keys(fieldTypesDiff).length > 0 && Object.keys(dynamicFieldsDiff).length > 0 && Object.keys(copyFieldsDiff).length > 0">
+          <p class="clearfix diff-text">No diff to show</p>
+        </div>
         <div id="fields-diff" ng-hide="fieldsDiff == null" ng-show="Object.keys(fieldsDiff).length > 0">
-          <div id="fields-updated" ng-show="Object.keys(fieldsDiff.updated).length > 0">
+          <div id="fields-updated" ng-hide="fieldsDiff.updated == null" ng-show="Object.keys(fieldsDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Fields</p>
             <table class="diff">
               <tr>
@@ -241,7 +245,7 @@ limitations under the License.
               </tr>
             </table>
           </div>
-          <div id="fields-added" ng-show="Object.keys(fieldsDiff.added).length > 0">
+          <div id="fields-added" ng-hide="fieldsDiff.added == null" ng-show="Object.keys(fieldsDiff.added).length > 0">
             <p class="clearfix diff-text">New Fields</p>
             <ul>
               <li class="clearfix element" ng-repeat="field in fieldsDiff.added">
@@ -249,7 +253,7 @@ limitations under the License.
               </li>
             </ul>
           </div>
-          <div id="fields-removed" ng-show="Object.keys(fieldsDiff.removed).length > 0">
+          <div id="fields-removed" ng-hide="fieldsDiff.removed == null" ng-show="Object.keys(fieldsDiff.removed).length > 0">
             <p class="clearfix diff-text">Removed Fields</p>
             <ul>
               <li class="clearfix element" ng-repeat="field in fieldsDiff.removed">
@@ -259,9 +263,9 @@ limitations under the License.
           </div>
         </div>
         <div id="fieldtypes-diff" ng-hide="fieldTypesDiff == null" ng-show="Object.keys(fieldTypesDiff).length > 0">
-          <div id="fieldtypes-updated" ng-show="Object.keys(fieldTypesDiff.updated).length > 0">
+          <div id="fieldtypes-updated" ng-hide="fieldTypesDiff.updated == null" ng-show="Object.keys(fieldTypesDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Field Types</p>
-            <table class="diff">
+            <table class="diff" ng-show="Object.keys(fieldTypesDiff.updated).length > 0">
               <tr>
                 <th>Name</th>
                 <th>Old</th>
@@ -274,7 +278,7 @@ limitations under the License.
               </tr>
             </table>
           </div>
-          <div id="fieldtypes-added" ng-show="Object.keys(fieldTypesDiff.added).length > 0">
+          <div id="fieldtypes-added" ng-hide="fieldTypesDiff.added == null" ng-show="Object.keys(fieldTypesDiff.added).length > 0">
             <p class="clearfix diff-text">New Field Types</p>
             <ul>
               <li class="clearfix element" ng-repeat="fieldtype in fieldTypesDiff.added">
@@ -282,7 +286,7 @@ limitations under the License.
               </li>
             </ul>
           </div>
-          <div id="fieldtypes-removed" ng-show="Object.keys(fieldTypesDiff.removed).length > 0">
+          <div id="fieldtypes-removed" ng-hide="fieldTypesDiff.removed == null" ng-show="Object.keys(fieldTypesDiff.removed).length > 0">
             <p class="clearfix diff-text">Removed Field Types</p>
             <ul>
               <li class="clearfix element" ng-repeat="fieldtype in fieldTypesDiff.removed">
@@ -292,7 +296,7 @@ limitations under the License.
           </div>
         </div>
         <div id="dynamicfields-diff" ng-hide="dynamicFieldsDiff == null" ng-show="Object.keys(dynamicFieldsDiff).length > 0">
-          <div id="dynamicfields-updated" ng-show="Object.keys(dynamicFieldsDiff.updated).length > 0">
+          <div id="dynamicfields-updated" ng-hide="dynamicFieldsDiff.updated == null" ng-show="Object.keys(dynamicFieldsDiff.updated).length > 0">
             <p class="clearfix diff-text">Updated Dynamic Fields</p>
             <table class="diff">
               <tr>
@@ -307,7 +311,7 @@ limitations under the License.
               </tr>
             </table>
           </div>
-          <div id="dynamicfields-added" ng-show="Object.keys(dynamicFieldsDiff.added).length > 0">
+          <div id="dynamicfields-added" ng-hide="dynamicFieldsDiff.added == null" ng-show="Object.keys(dynamicFieldsDiff.added).length > 0">
             <p class="clearfix diff-text">New Dynamic Fields</p>
             <ul>
               <li class="clearfix" ng-repeat="dfield in dynamicFieldsDiff.added">
@@ -315,7 +319,7 @@ limitations under the License.
               </li>
             </ul>
           </div>
-          <div id="dynamicfields-removed" ng-show="Object.keys(dynamicFieldsDiff.removed).length > 0">
+          <div id="dynamicfields-removed" ng-hide="dynamicFieldsDiff.removed == null" ng-show="Object.keys(dynamicFieldsDiff.removed).length > 0">
             <p class="clearfix diff-text">Removed Dynamic Fields</p>
             <ul>
               <li class="clearfix" ng-repeat="dfield in dynamicFieldsDiff.removed">

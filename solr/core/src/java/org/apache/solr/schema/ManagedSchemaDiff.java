@@ -40,10 +40,18 @@ public class ManagedSchemaDiff {
     Map<String, Object> dynamicFieldDiff = diff(mapDynamicFieldToPropValues(oldSchema.getDynamicFields()), mapDynamicFieldToPropValues(newSchema.getDynamicFields()));
     Map<String, Object> copyFieldDiff = diff(getCopyFieldList(oldSchema), getCopyFieldList(newSchema));
 
-    diff.put(FIELDS_KEY_STRING, fieldsDiff);
-    diff.put(FIELD_TYPES_KEY_STRING, fieldTypesDiff);
-    diff.put(DYNAMIC_FIELDS_KEY_STRING, dynamicFieldDiff);
-    diff.put(COPY_FIELDS_KEY_STRING, copyFieldDiff);
+    if (!fieldsDiff.isEmpty()) {
+      diff.put(FIELDS_KEY_STRING, fieldsDiff);
+    }
+    if (!fieldTypesDiff.isEmpty()) {
+      diff.put(FIELD_TYPES_KEY_STRING, fieldTypesDiff);
+    }
+    if (!dynamicFieldDiff.isEmpty()) {
+      diff.put(DYNAMIC_FIELDS_KEY_STRING, dynamicFieldDiff);
+    }
+    if (!copyFieldDiff.isEmpty()) {
+      diff.put(COPY_FIELDS_KEY_STRING, copyFieldDiff);
+    }
 
     return diff;
   }
@@ -74,9 +82,15 @@ public class ManagedSchemaDiff {
     }
 
     Map<String, Object> mapDiff = new HashMap<>();
-    mapDiff.put(UPDATED_KEY_STRING, changedValues);
-    mapDiff.put(ADDED_KEY_STRING, newValues);
-    mapDiff.put(REMOVED_KEY_STRING, removedValues);
+    if (!changedValues.isEmpty()) {
+      mapDiff.put(UPDATED_KEY_STRING, changedValues);
+    }
+    if (!newValues.isEmpty()) {
+      mapDiff.put(ADDED_KEY_STRING, newValues);
+    }
+    if (!removedValues.isEmpty()) {
+      mapDiff.put(REMOVED_KEY_STRING, removedValues);
+    }
 
     return mapDiff;
   }
@@ -125,8 +139,12 @@ public class ManagedSchemaDiff {
     });
 
     Map<String, Object> mapDiff = new HashMap<>();
-    mapDiff.put("old", oldList);
-    mapDiff.put("new", newList);
+    if (!oldList.isEmpty()) {
+      mapDiff.put("old", oldList);
+    }
+    if (!newList.isEmpty()) {
+      mapDiff.put("new", newList);
+    }
     return mapDiff;
   }
 

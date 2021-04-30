@@ -689,8 +689,8 @@ public class SchemaDesignerAPI implements SchemaDesignerConstants {
 
     if (exists) {
       String mutableId = getMutableId(configSet);
-      ManagedIndexSchema designerSchema = loadLatestSchema(mutableId, new HashMap<>());
-      ManagedIndexSchema zkSchema = loadLatestSchema(configSet, null);
+      ManagedIndexSchema designerSchema = loadLatestSchema(mutableId);
+      ManagedIndexSchema zkSchema = loadLatestSchema(configSet);
 
       Map<String, Object> diff = ManagedSchemaDiff.diff(zkSchema, designerSchema);
 

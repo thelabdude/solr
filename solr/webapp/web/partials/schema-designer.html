@@ -326,7 +326,7 @@ limitations under the License.
         </div>
         <div id="copyfields-diff" ng-hide="copyFieldsDiff == null" ng-show="Object.keys(copyFieldsDiff).length > 0">
           <p class="clearfix diff-text">Copy Fields</p>
-          <table class="diff">
+          <table class="diff" ng-show="copyFieldsDiff.old.length > 0 || copyFieldsDiff.new.length > 0">
             <tr>
               <th>Source</th>
               <th>Destination</th>

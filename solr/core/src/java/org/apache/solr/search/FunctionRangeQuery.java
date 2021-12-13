@@ -26,6 +26,7 @@ import org.apache.lucene.queries.function.ValueSourceScorer;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Weight;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.search.function.ValueSourceRangeFilter;
 
 // This class works as either a normal constant score query, or as a PostFilter using a collector
@@ -40,9 +41,19 @@ public class FunctionRangeQuery extends SolrConstantScoreQuery implements PostFi
   }
 
   @Override
+  public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
+    return rangeFilt.createWeight(searcher, scoreMode, boost);
+  }
+
+  @Override
   public DelegatingCollector getFilterCollector(IndexSearcher searcher) {
     Map<Object,Object> fcontext = ValueSource.newContext(searcher);
-    Weight weight = rangeFilt.createWeight(searcher, ScoreMode.COMPLETE, 1);
+    Weight weight;
+    try {
+      weight = rangeFilt.createWeight(searcher, ScoreMode.COMPLETE, 1);
+    } catch (IOException ioExc) {
+      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, ioExc);
+    }
     return new FunctionRangeCollector(fcontext, weight);
   }
 

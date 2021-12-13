@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.function.Consumer;
 
+import org.apache.lucene.search.Query;
 import org.apache.solr.analytics.facet.AnalyticsFacet;
 import org.apache.solr.analytics.facet.PivotFacet;
 import org.apache.solr.analytics.facet.AbstractSolrQueryFacet;
@@ -38,7 +39,6 @@ import org.apache.solr.analytics.function.ReductionCollectionManager;
 import org.apache.solr.analytics.util.AnalyticsResponseHeadings;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.search.Filter;
 
 /**
  * The manager for faceted analytics. This class manages one grouping of facets and expressions to compute
@@ -104,7 +104,7 @@ public class AnalyticsGroupingManager {
    * @param queryRequest from the overall search request
    * @param cons where the executers are passed to
    */
-  public void getFacetExecuters(Filter filter, SolrQueryRequest queryRequest, Consumer<FacetValueQueryExecuter> cons) {
+  public void getFacetExecuters(Query filter, SolrQueryRequest queryRequest, Consumer<FacetValueQueryExecuter> cons) {
     facets.forEach( (name, facet) -> {
       if (facet instanceof AbstractSolrQueryFacet) {
         ((AbstractSolrQueryFacet)facet).createFacetValueExecuters(filter, queryRequest, cons);

@@ -25,7 +25,6 @@ import com.carrotsearch.hppc.IntHashSet;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.ReaderUtil;
-import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.Bits;
@@ -761,7 +760,9 @@ public class SortedIntDocSet extends DocSet {
   }
 
   @Override
-  public Filter getTopFilter() {
+  public DocSetQuery makeQuery() {
+    return new DocSetQuery(this);
+    /* TODO: tjp
     return new Filter() {
 
       @Override
@@ -805,6 +806,7 @@ public class SortedIntDocSet extends DocSet {
         return System.identityHashCode(this);
       }
     };
+     */
   }
 
   @Override

@@ -24,7 +24,6 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.ConstantScoreScorer;
 import org.apache.lucene.search.ConstantScoreWeight;
-import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
@@ -41,17 +40,13 @@ import org.apache.lucene.search.Weight;
  * Experimental and subject to change.
  */
 public class SolrConstantScoreQuery extends Query implements ExtendedQuery {
-  private final Filter filter;
+  private final Query filter;
+  
   boolean cache = true;  // cache by default
   int cost;
 
-  public SolrConstantScoreQuery(Filter filter) {
+  public SolrConstantScoreQuery(Query filter) {
     this.filter = filter;
-  }
-
-  /** Returns the encapsulated filter */
-  public Filter getFilter() {
-    return filter;
   }
 
   @Override
@@ -82,17 +77,15 @@ public class SolrConstantScoreQuery extends Query implements ExtendedQuery {
       super(SolrConstantScoreQuery.this, boost);
       this.scoreMode = scoreMode;
       this.context = ValueSource.newContext(searcher);
-      if (filter instanceof SolrFilter)
-        ((SolrFilter)filter).createWeight(context, searcher);
     }
 
     @Override
     public Scorer scorer(LeafReaderContext context) throws IOException {
-      DocIdSet docIdSet = filter instanceof SolrFilter ? ((SolrFilter)filter).getDocIdSet(this.context, context, null) : filter.getDocIdSet(context, null);
-      if (docIdSet == null) {
-        return null;
+      if (!(filter instanceof DocSetQuery)) {
+        throw new IllegalStateException(this.getClass().getName()+" should override createWeight if not providing a DocSetQuery!");
       }
-      DocIdSetIterator iterator = docIdSet.iterator();
+      DocSetQuery dsq = (DocSetQuery)filter;
+      DocIdSetIterator iterator = dsq.getDocSet().iterator(context);
       if (iterator == null) {
         return null;
       }
@@ -114,7 +107,7 @@ public class SolrConstantScoreQuery extends Query implements ExtendedQuery {
   /** Prints a user-readable version of this query. */
   @Override
   public String toString(String field) {
-    return ExtendedQueryBase.getOptionsString(this) + "ConstantScore(" + filter.toString() + ")";
+    return ExtendedQueryBase.getOptionsString(this) + "ConstantScore(" + filter + ")";
   }
 
   /** Returns true if <code>o</code> is equal to this. */

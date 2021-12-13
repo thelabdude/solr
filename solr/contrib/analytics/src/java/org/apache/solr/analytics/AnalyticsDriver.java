@@ -20,14 +20,13 @@ import java.io.IOException;
 import java.util.List;
 
 import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.solr.analytics.AnalyticsRequestManager.StreamingInfo;
 import org.apache.solr.analytics.facet.AbstractSolrQueryFacet.FacetValueQueryExecuter;
 import org.apache.solr.analytics.facet.StreamingFacet;
 import org.apache.solr.analytics.function.ReductionCollectionManager;
 import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.search.Filter;
+import org.apache.solr.search.DocSetQuery;
 import org.apache.solr.search.SolrIndexSearcher;
 
 public class AnalyticsDriver {
@@ -41,7 +40,7 @@ public class AnalyticsDriver {
    * @param queryRequest used for the search request
    * @throws IOException if an error occurs while reading from Solr
    */
-  public static void drive(AnalyticsRequestManager manager, SolrIndexSearcher searcher, Filter filter, SolrQueryRequest queryRequest) throws IOException {
+  public static void drive(AnalyticsRequestManager manager, SolrIndexSearcher searcher, DocSetQuery filter, SolrQueryRequest queryRequest) throws IOException {
     StreamingInfo streamingInfo = manager.getStreamingFacetInfo();
     Iterable<StreamingFacet> streamingFacets = streamingInfo.streamingFacets;
     ReductionCollectionManager collectionManager = streamingInfo.streamingCollectionManager;
@@ -54,11 +53,7 @@ public class AnalyticsDriver {
       List<LeafReaderContext> contexts = searcher.getTopReaderContext().leaves();
       for (int leafNum = 0; leafNum < contexts.size(); leafNum++) {
         LeafReaderContext context = contexts.get(leafNum);
-        DocIdSet dis = filter.getDocIdSet(context, null); // solr docsets already exclude any deleted docs
-        if (dis == null) {
-          continue;
-        }
-        DocIdSetIterator disi = dis.iterator();
+        DocIdSetIterator disi = filter.getDocSet().iterator(context);
         if (disi != null) {
           collectionManager.doSetNextReader(context);
           int doc = disi.nextDoc();

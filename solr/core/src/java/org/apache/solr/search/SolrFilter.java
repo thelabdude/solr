@@ -16,13 +16,11 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.DocIdSet;
-import org.apache.lucene.util.Bits;
-
-import java.util.Map;
 import java.io.IOException;
+import java.util.Map;
+
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
 
 
 /** A SolrFilter extends the Lucene Filter and adds extra semantics such as passing on
@@ -30,17 +28,9 @@ import java.io.IOException;
  *
  * Experimental and subject to change.
  */
-public abstract class SolrFilter extends Filter {
+public abstract class SolrFilter extends Query {
 
   /** Implementations should propagate createWeight to sub-ValueSources which can store weight info in the context.
    * The context object will be passed to getDocIdSet() where this info can be retrieved. */
   public abstract void createWeight(Map<Object, Object> context, IndexSearcher searcher) throws IOException;
-  
-  public abstract DocIdSet getDocIdSet(Map<Object, Object> context
-          , LeafReaderContext readerContext, Bits acceptDocs) throws IOException;
-
-  @Override
-  public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
-    return getDocIdSet(null, context, acceptDocs);
-  }
 }

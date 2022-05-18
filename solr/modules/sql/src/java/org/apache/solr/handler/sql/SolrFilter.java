@@ -539,7 +539,7 @@ class SolrFilter extends Filter implements SolrRel {
           }
         }
         return Pair.of(
-                translateBinary2(call.getOperands().get(0), call.getOperands().get(1)), escapeChar);
+            translateBinary2(call.getOperands().get(0), call.getOperands().get(1)), escapeChar);
       } else {
         return Pair.of(getFieldValuePair(node), null);
       }
